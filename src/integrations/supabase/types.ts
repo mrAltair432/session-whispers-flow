@@ -14,7 +14,188 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      daily_stats: {
+        Row: {
+          blocked: boolean
+          loss_usd: number
+          pnl_usd: number
+          trade_date: string
+          trades_count: number
+          user_id: string
+        }
+        Insert: {
+          blocked?: boolean
+          loss_usd?: number
+          pnl_usd?: number
+          trade_date: string
+          trades_count?: number
+          user_id: string
+        }
+        Update: {
+          blocked?: boolean
+          loss_usd?: number
+          pnl_usd?: number
+          trade_date?: string
+          trades_count?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      journal_trades: {
+        Row: {
+          bias: string
+          closed_at: string | null
+          entry: number
+          exit: number | null
+          id: string
+          lot_size: number
+          notes: string | null
+          opened_at: string
+          pnl_usd: number | null
+          r_multiple: number | null
+          result: string | null
+          setup_id: string | null
+          stop_loss: number
+          user_id: string
+        }
+        Insert: {
+          bias: string
+          closed_at?: string | null
+          entry: number
+          exit?: number | null
+          id?: string
+          lot_size: number
+          notes?: string | null
+          opened_at?: string
+          pnl_usd?: number | null
+          r_multiple?: number | null
+          result?: string | null
+          setup_id?: string | null
+          stop_loss: number
+          user_id: string
+        }
+        Update: {
+          bias?: string
+          closed_at?: string | null
+          entry?: number
+          exit?: number | null
+          id?: string
+          lot_size?: number
+          notes?: string | null
+          opened_at?: string
+          pnl_usd?: number | null
+          r_multiple?: number | null
+          result?: string | null
+          setup_id?: string | null
+          stop_loss?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "journal_trades_setup_id_fkey"
+            columns: ["setup_id"]
+            isOneToOne: false
+            referencedRelation: "setups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      setups: {
+        Row: {
+          bias: string
+          confidence: string
+          created_at: string
+          entry: number
+          id: string
+          lot_size: number
+          reasoning: Json
+          risk_usd: number
+          status: string
+          stop_loss: number
+          symbol: string
+          telegram_sent_at: string | null
+          tp1: number
+          tp2: number
+          tp3: number | null
+          user_id: string
+        }
+        Insert: {
+          bias: string
+          confidence: string
+          created_at?: string
+          entry: number
+          id?: string
+          lot_size: number
+          reasoning?: Json
+          risk_usd: number
+          status?: string
+          stop_loss: number
+          symbol?: string
+          telegram_sent_at?: string | null
+          tp1: number
+          tp2: number
+          tp3?: number | null
+          user_id: string
+        }
+        Update: {
+          bias?: string
+          confidence?: string
+          created_at?: string
+          entry?: number
+          id?: string
+          lot_size?: number
+          reasoning?: Json
+          risk_usd?: number
+          status?: string
+          stop_loss?: number
+          symbol?: string
+          telegram_sent_at?: string | null
+          tp1?: number
+          tp2?: number
+          tp3?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_config: {
+        Row: {
+          auto_alert_high_confidence: boolean
+          balance: number
+          created_at: string
+          max_daily_loss_pct: number
+          max_trades_per_day: number
+          risk_per_trade: number
+          telegram_chat_id: string | null
+          telegram_enabled: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          auto_alert_high_confidence?: boolean
+          balance?: number
+          created_at?: string
+          max_daily_loss_pct?: number
+          max_trades_per_day?: number
+          risk_per_trade?: number
+          telegram_chat_id?: string | null
+          telegram_enabled?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          auto_alert_high_confidence?: boolean
+          balance?: number
+          created_at?: string
+          max_daily_loss_pct?: number
+          max_trades_per_day?: number
+          risk_per_trade?: number
+          telegram_chat_id?: string | null
+          telegram_enabled?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
