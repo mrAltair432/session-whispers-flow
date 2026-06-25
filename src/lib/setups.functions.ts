@@ -23,7 +23,12 @@ export const saveSetup = createServerFn({ method: "POST" })
     const { send_telegram, ...row } = data;
     const { data: inserted, error } = await context.supabase
       .from("setups")
-      .insert({ ...row, user_id: context.userId, status: send_telegram ? "sent" : "pending" })
+      .insert({
+        ...row,
+        reasoning: row.reasoning as never,
+        user_id: context.userId,
+        status: send_telegram ? "sent" : "pending",
+      })
       .select()
       .single();
     if (error) throw new Error(error.message);
