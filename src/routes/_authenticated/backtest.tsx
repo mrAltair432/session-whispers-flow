@@ -534,11 +534,11 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={m.equityCurve}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="trade" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                  <Line type="monotone" dataKey="equityR" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="trade" stroke="var(--muted-foreground)" fontSize={11} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={11} />
+                  <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                  <Line type="monotone" dataKey="equityR" stroke="var(--primary)" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -549,11 +549,11 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={m.byHour}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="hour" stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                  <Bar dataKey="totalR" fill="hsl(var(--primary))" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="hour" stroke="var(--muted-foreground)" fontSize={10} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={10} />
+                  <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                  <Bar dataKey="totalR" fill="var(--primary)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -564,11 +564,11 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={m.byWeekday.map(d => ({ ...d, name: WEEKDAYS[d.weekday] }))}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                  <Bar dataKey="totalR" fill="hsl(var(--primary))" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="name" stroke="var(--muted-foreground)" fontSize={10} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={10} />
+                  <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                  <Bar dataKey="totalR" fill="var(--primary)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
