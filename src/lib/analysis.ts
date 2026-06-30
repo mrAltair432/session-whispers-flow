@@ -114,3 +114,54 @@ export function calcLotSize(balance: number, riskPct: number, entry: number, sto
   const lot = riskUsd / (distance * 100);
   return { lot: Math.round(lot * 100) / 100, riskUsd: Math.round(riskUsd * 100) / 100 };
 }
+
+// ATR (Average True Range) - Wilder smoothing
+export function atr(candles: Candle[], period = 14): number[] {
+  const out: number[] = new Array(candles.length).fill(0);
+  if (candles.length < 2) return out;
+  const trs: number[] = [0];
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const p = candles[i - 1];
+    trs.push(Math.max(c.high - c.low, Math.abs(c.high - p.close), Math.abs(c.low - p.close)));
+  }
+  let prev = 0;
+  for (let i = 1; i < trs.length; i++) {
+    if (i < period) {
+      prev += trs[i];
+      if (i === period - 1) {
+        prev = prev / (period - 1);
+        out[i] = prev;
+      }
+    } else {
+      prev = (prev * (period - 1) + trs[i]) / period;
+      out[i] = prev;
+    }
+  }
+  return out;
+}
+
+// Break of Structure (BOS): the last candle closed beyond the most recent opposite swing
+// in the direction of the bias. Used as confirmation on M15 after the H1 sweep.
+export function detectBOS(candles: Candle[], bias: "long" | "short", lookback = 20): boolean {
+  if (candles.length < lookback + 3) return false;
+  const window = candles.slice(-lookback - 1, -1);
+  const last = candles[candles.length - 1];
+  if (bias === "long") {
+    const highestHigh = Math.max(...window.map((c) => c.high));
+    return last.close > highestHigh;
+  } else {
+    const lowestLow = Math.min(...window.map((c) => c.low));
+    return last.close < lowestLow;
+  }
+}
+
+// Killzone: London 02:00-05:00 UTC, NY 12:00-15:00 UTC.
+// Returns the active session or null. Gold reacts strongest in these windows.
+export function getKillzone(unixSeconds: number): "london" | "ny" | null {
+  const d = new Date(unixSeconds * 1000);
+  const hUTC = d.getUTCHours();
+  if (hUTC >= 2 && hUTC < 5) return "london";
+  if (hUTC >= 12 && hUTC < 15) return "ny";
+  return null;
+}
