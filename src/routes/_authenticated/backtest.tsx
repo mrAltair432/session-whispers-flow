@@ -9,10 +9,10 @@ import {
   type OptimizerPayload,
 } from "@/lib/backtest.functions";
 import type { BacktestResult } from "@/lib/backtest";
-import { runBacktest } from "@/lib/backtest";
 import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
+import { useBacktestWorker } from "@/lib/use-backtest-worker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download } from "lucide-react";
@@ -32,6 +32,7 @@ function BacktestPage() {
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
   const allStrategies = listStrategies();
+  const worker = useBacktestWorker();
 
   const [minScoreOverride, setMinScoreOverride] = useState<number | "">("");
   const [enginesSelected, setEnginesSelected] = useState<EngineKey[]>(allStrategies.map((s) => s.key));
@@ -60,18 +61,20 @@ function BacktestPage() {
             error: `Para correr local con CSV faltan: ${missingRequiredTfs.join(", ")}. Sube H4, H1 y M15 juntos para evitar enviar datos pesados al servidor.`,
           };
         }
-        // Corremos en el navegador para evitar enviar 100k+ velas al server (sandbox proxy 502).
-        const results = enginesSelected.map((engineKey) =>
-          runBacktest(customH4, customH1, customM15, {
-            engineKey,
-            params: minScoreOverride === "" ? undefined : { minScore: Number(minScoreOverride) },
-            excludeHours,
-            excludeWeekdays,
-            autoTimeFilters,
-          }),
-        );
+        // Corremos en un Web Worker: usa un core extra de CPU y no congela la UI.
+        const resp = await worker.run<{ results: BacktestResult[] }>({
+          type: "backtest",
+          h4: customH4,
+          h1: customH1,
+          m15: customM15,
+          engines: enginesSelected,
+          minScore: minScoreOverride === "" ? undefined : Number(minScoreOverride),
+          excludeHours,
+          excludeWeekdays,
+          autoTimeFilters,
+        });
         return {
-          results,
+          results: resp.results,
           range: {
             from: customM15[0]?.time ?? 0,
             to: customM15[customM15.length - 1]?.time ?? 0,
@@ -105,51 +108,16 @@ function BacktestPage() {
             engineKey: optimizerEngine,
           };
         }
-        const base = (STRATEGIES[optimizerEngine].defaultParams.minScore as number | undefined) ?? 70;
-        const minScores = Array.from(new Set([
-          Math.max(50, base - 15), Math.max(50, base - 10), Math.max(50, base - 5),
-          base,
-          Math.min(95, base + 5), Math.min(95, base + 10), Math.min(95, base + 15),
-        ])).sort((a, b) => a - b);
-        const baseline = runBacktest(customH4, customH1, customM15, { engineKey: optimizerEngine });
-        const worstHours = baseline.metrics.byHour
-          .filter((h) => h.trades >= 2 && h.totalR < 0)
-          .sort((a, b) => a.totalR - b.totalR)
-          .slice(0, 3)
-          .map((h) => h.hour);
-        const variants = [
-          { excludeHours: [] as number[] },
-          { excludeHours: worstHours },
-        ];
-        const rows = [] as OptimizerPayload["rows"];
-        for (const ms of minScores) {
-          for (const v of variants) {
-            const r = runBacktest(customH4, customH1, customM15, {
-              engineKey: optimizerEngine,
-              params: { minScore: ms },
-              excludeHours: v.excludeHours,
-              excludeWeekdays,
-              autoTimeFilters,
-            });
-            const mm = r.metrics;
-            const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);
-            const composite = mm.trades >= 10 ? mm.expectancy * sampleWeight - 0.1 * mm.maxDrawdownR : -Infinity;
-            rows.push({
-              minScore: ms,
-              excludeHours: v.excludeHours,
-              trades: mm.trades,
-              winrate: mm.winrate,
-              totalR: mm.totalR,
-              expectancy: mm.expectancy,
-              profitFactor: isFinite(mm.profitFactor) ? mm.profitFactor : 99,
-              maxDrawdownR: mm.maxDrawdownR,
-              sharpe: mm.sharpe,
-              score: composite,
-            });
-          }
-        }
-        rows.sort((a, b) => b.score - a.score);
-        return { rows, best: rows[0] ?? null, error: null, engineKey: optimizerEngine };
+        const resp = await worker.run<{ rows: OptimizerPayload["rows"]; best: OptimizerPayload["best"] }>({
+          type: "optimize",
+          h4: customH4,
+          h1: customH1,
+          m15: customM15,
+          engineKey: optimizerEngine,
+          excludeWeekdays,
+          autoTimeFilters,
+        });
+        return { rows: resp.rows, best: resp.best, error: null, engineKey: optimizerEngine };
       }
       return opt({
         data: {
@@ -471,7 +439,11 @@ function BacktestPage() {
         {m.isPending && (
           <div className="rounded-lg border border-border bg-card p-12 text-center">
             <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-primary" />
-            <p className="text-sm text-muted-foreground">Procesando histórico... esto puede tardar 10-30s</p>
+            <p className="text-sm text-muted-foreground">
+              {worker.progress
+                ? `Procesando en Web Worker · ${worker.progress.label} (${worker.progress.step + 1}/${worker.progress.total})`
+                : "Procesando histórico..."}
+            </p>
           </div>
         )}
 
@@ -562,11 +534,11 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={m.equityCurve}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="trade" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                  <Line type="monotone" dataKey="equityR" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="trade" stroke="var(--muted-foreground)" fontSize={11} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={11} />
+                  <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                  <Line type="monotone" dataKey="equityR" stroke="var(--primary)" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -577,11 +549,11 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={m.byHour}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="hour" stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                  <Bar dataKey="totalR" fill="hsl(var(--primary))" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="hour" stroke="var(--muted-foreground)" fontSize={10} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={10} />
+                  <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                  <Bar dataKey="totalR" fill="var(--primary)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -592,11 +564,11 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             <div className="h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={m.byWeekday.map(d => ({ ...d, name: WEEKDAYS[d.weekday] }))}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
-                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))" }} />
-                  <Bar dataKey="totalR" fill="hsl(var(--primary))" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="name" stroke="var(--muted-foreground)" fontSize={10} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={10} />
+                  <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                  <Bar dataKey="totalR" fill="var(--primary)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
