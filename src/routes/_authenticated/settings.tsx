@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import { getMyConfig, updateMyConfig } from "@/lib/config.functions";
+import { sendTelegramTest } from "@/lib/setups.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +51,13 @@ function SettingsPage() {
       qc.invalidateQueries({ queryKey: ["my-config"] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
+  });
+
+  const testTg = useServerFn(sendTelegramTest);
+  const testM = useMutation({
+    mutationFn: () => testTg(),
+    onSuccess: () => toast.success("Mensaje enviado a Telegram 🚀"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Error enviando"),
   });
 
   function save(e: React.FormEvent) {
@@ -105,6 +113,16 @@ function SettingsPage() {
             </Field>
             <div className="text-xs text-muted-foreground rounded-md border border-border bg-background/50 p-3 mt-2">
               <strong>⚠️ Falta conectar Telegram.</strong> Cuando me pidas activar las alertas, conecto el bot de Telegram desde Lovable y queda listo.
+            </div>
+            <div className="pt-2">
+              <Button type="button" variant="outline" size="sm"
+                onClick={() => testM.mutate()}
+                disabled={testM.isPending || !form.telegram_enabled || !form.telegram_chat_id.trim()}>
+                {testM.isPending ? "Enviando..." : "Enviar mensaje de prueba"}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2">
+                Guarda primero los cambios para que el chat_id quede registrado.
+              </p>
             </div>
           </Section>
 
