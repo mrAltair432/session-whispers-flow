@@ -1,14 +1,15 @@
 import type { Candle } from "./analysis";
-import { generateSignal, type SignalProfile } from "./signal-engine";
+import { getStrategy, type EngineKey, type StrategyParams } from "./strategies";
 
 export type BacktestOptions = {
-  profile: SignalProfile;
-  minScore?: number;
+  engineKey: EngineKey;
+  params?: StrategyParams;
   warmupBars?: number;     // bars to skip at start (default 100)
   maxHoldBars?: number;    // close trade after N M15 bars if no exit (default 96 = 24h)
   cooldownBars?: number;   // bars to wait between trades (default 16 = 4h)
-  excludeHours?: number[]; // UTC hours to skip (e.g. [14, 21])
+  excludeHours?: number[]; // UTC hours to skip (manual)
   excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
+  autoTimeFilters?: boolean; // default true: aplica filtros de horario peligroso del oro
 };
 
 export type BacktestTrade = {
@@ -49,10 +50,27 @@ export type BacktestMetrics = {
 };
 
 export type BacktestResult = {
-  profile: SignalProfile;
+  engineKey: EngineKey;
   metrics: BacktestMetrics;
   trades: BacktestTrade[];
 };
+
+// Filtros automáticos para XAU/USD:
+// - sábado completo (weekday=6) → mercado cerrado
+// - viernes >= 21 UTC → cierre semanal
+// - domingo < 22 UTC → mercado aún cerrado (abre 22 UTC dom = lunes Sídney)
+// - lunes < 2 UTC → primeras 2h tras gap de apertura
+// - hora UTC 22 lun-jue → pausa diaria CME (17:00 NY)
+function isMarketClosedOrRisky(d: Date): boolean {
+  const wd = d.getUTCDay(); // 0=Sun..6=Sat
+  const h = d.getUTCHours();
+  if (wd === 6) return true;             // sábado
+  if (wd === 0 && h < 22) return true;   // domingo antes de la apertura
+  if (wd === 5 && h >= 21) return true;  // viernes cierre
+  if (wd === 1 && h < 2) return true;    // gap lunes
+  if (wd >= 1 && wd <= 4 && h === 22) return true; // pausa diaria L-J
+  return false;
+}
 
 // Filter h4/h1 candles up to a given timestamp (returns slice).
 function sliceUpTo(candles: Candle[], time: number): Candle[] {
@@ -232,6 +250,9 @@ export function runBacktest(
   const warmup = opts.warmupBars ?? 100;
   const maxHold = opts.maxHoldBars ?? 96;
   const cooldown = opts.cooldownBars ?? 16;
+  const autoFilters = opts.autoTimeFilters ?? true;
+  const strategy = getStrategy(opts.engineKey);
+  const params: StrategyParams = { ...strategy.defaultParams, ...(opts.params ?? {}) };
   const trades: BacktestTrade[] = [];
 
   let lastExitIdx = -Infinity;
@@ -240,17 +261,15 @@ export function runBacktest(
     if (i - lastExitIdx < cooldown) continue;
     const barTime = m15[i].time;
     const d0 = new Date(barTime * 1000);
+    if (autoFilters && isMarketClosedOrRisky(d0)) continue;
     if (opts.excludeHours?.includes(d0.getUTCHours())) continue;
     if (opts.excludeWeekdays?.includes(d0.getUTCDay())) continue;
     const m15Window = m15.slice(0, i + 1);
     const t = m15[i].time;
-    const h1Window = opts.profile === "m15" ? [] : sliceUpTo(h1, t);
-    const h4Window = opts.profile === "full" ? sliceUpTo(h4, t) : [];
+    const h1Window = sliceUpTo(h1, t);
+    const h4Window = sliceUpTo(h4, t);
 
-    const signal = generateSignal(h4Window, h1Window, m15Window, {
-      profile: opts.profile,
-      minScore: opts.minScore,
-    });
+    const signal = strategy.evaluate(h4Window, h1Window, m15Window, params);
     if (!signal) continue;
 
     const entryBar = m15[i + 1];
@@ -284,5 +303,5 @@ export function runBacktest(
     i = lastExitIdx;
   }
 
-  return { profile: opts.profile, metrics: computeMetrics(trades), trades };
+  return { engineKey: opts.engineKey, metrics: computeMetrics(trades), trades };
 }

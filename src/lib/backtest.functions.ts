@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { runBacktest, type BacktestResult } from "./backtest";
-import type { SignalProfile } from "./signal-engine";
 import type { Candle } from "./analysis";
+import { listStrategies, STRATEGIES, type EngineKey } from "./strategies";
 
 type TDValue = { datetime: string; open: string; high: string; low: string; close: string };
 type TDResponse = { values?: TDValue[]; status?: string; message?: string };
@@ -31,7 +31,7 @@ async function fetchHistory(interval: Interval, outputsize: number, apiKey: stri
 }
 
 export type BacktestPayload = {
-  results: BacktestResult[]; // one per profile
+  results: BacktestResult[];
   range: { from: number; to: number; m15Bars: number; h1Bars: number; h4Bars: number };
   error: string | null;
 };
@@ -40,16 +40,24 @@ export const runFullBacktest = createServerFn({ method: "POST" })
   .inputValidator(
     (data: {
       minScore?: number;
-      profiles?: SignalProfile[];
+      engines?: EngineKey[];
       excludeHours?: number[];
       excludeWeekdays?: number[];
+      autoTimeFilters?: boolean;
       customH4?: Candle[];
+      customH1?: Candle[];
+      customM15?: Candle[];
     }) => ({
-      minScore: typeof data.minScore === "number" ? data.minScore : 70,
-      profiles: (data.profiles ?? ["full", "h1m15", "m15"]) as SignalProfile[],
+      minScore: typeof data.minScore === "number" ? data.minScore : undefined,
+      engines: (data.engines && data.engines.length
+        ? data.engines
+        : listStrategies().map((s) => s.key)) as EngineKey[],
       excludeHours: Array.isArray(data.excludeHours) ? data.excludeHours : [],
       excludeWeekdays: Array.isArray(data.excludeWeekdays) ? data.excludeWeekdays : [],
+      autoTimeFilters: data.autoTimeFilters !== false,
       customH4: Array.isArray(data.customH4) ? data.customH4 : undefined,
+      customH1: Array.isArray(data.customH1) ? data.customH1 : undefined,
+      customM15: Array.isArray(data.customM15) ? data.customM15 : undefined,
     }),
   )
   .handler(async ({ data }): Promise<BacktestPayload> => {
@@ -62,18 +70,21 @@ export const runFullBacktest = createServerFn({ method: "POST" })
       };
     }
     try {
-      const [h4Fetched, h1, m15] = await Promise.all([
+      const [h4Fetched, h1Fetched, m15Fetched] = await Promise.all([
         data.customH4 ? Promise.resolve([] as Candle[]) : fetchHistory("4h", 2000, apiKey),
-        fetchHistory("1h", 5000, apiKey),
-        fetchHistory("15min", 5000, apiKey),
+        data.customH1 ? Promise.resolve([] as Candle[]) : fetchHistory("1h", 5000, apiKey),
+        data.customM15 ? Promise.resolve([] as Candle[]) : fetchHistory("15min", 5000, apiKey),
       ]);
-      const h4 = data.customH4 && data.customH4.length ? data.customH4 : h4Fetched;
-      const results = data.profiles.map((profile) =>
+      const h4  = data.customH4  && data.customH4.length  ? data.customH4  : h4Fetched;
+      const h1  = data.customH1  && data.customH1.length  ? data.customH1  : h1Fetched;
+      const m15 = data.customM15 && data.customM15.length ? data.customM15 : m15Fetched;
+      const results = data.engines.map((engineKey) =>
         runBacktest(h4, h1, m15, {
-          profile,
-          minScore: data.minScore,
+          engineKey,
+          params: data.minScore !== undefined ? { minScore: data.minScore } : undefined,
           excludeHours: data.excludeHours,
           excludeWeekdays: data.excludeWeekdays,
+          autoTimeFilters: data.autoTimeFilters,
         }),
       );
       return {
@@ -109,39 +120,53 @@ export type OptimizerRow = {
   profitFactor: number;
   maxDrawdownR: number;
   sharpe: number;
-  score: number; // composite ranking score
+  score: number;
 };
 
 export type OptimizerPayload = {
   rows: OptimizerRow[];
   best: OptimizerRow | null;
   error: string | null;
+  engineKey: EngineKey;
 };
 
 export const runOptimizer = createServerFn({ method: "POST" })
   .inputValidator(
-    (data: { profile?: SignalProfile; customH4?: Candle[] }) => ({
-      profile: (data.profile ?? "full") as SignalProfile,
+    (data: {
+      engineKey?: EngineKey;
+      customH4?: Candle[];
+      customH1?: Candle[];
+      customM15?: Candle[];
+    }) => ({
+      engineKey: (data.engineKey ?? "smc_london") as EngineKey,
       customH4: Array.isArray(data.customH4) ? data.customH4 : undefined,
+      customH1: Array.isArray(data.customH1) ? data.customH1 : undefined,
+      customM15: Array.isArray(data.customM15) ? data.customM15 : undefined,
     }),
   )
   .handler(async ({ data }): Promise<OptimizerPayload> => {
     const apiKey = process.env.TWELVE_DATA_API_KEY;
     if (!apiKey) {
-      return { rows: [], best: null, error: "TWELVE_DATA_API_KEY no está configurada" };
+      return { rows: [], best: null, error: "TWELVE_DATA_API_KEY no está configurada", engineKey: data.engineKey };
     }
     try {
-      const [h4Fetched, h1, m15] = await Promise.all([
+      const [h4Fetched, h1Fetched, m15Fetched] = await Promise.all([
         data.customH4 ? Promise.resolve([] as Candle[]) : fetchHistory("4h", 2000, apiKey),
-        fetchHistory("1h", 5000, apiKey),
-        fetchHistory("15min", 5000, apiKey),
+        data.customH1 ? Promise.resolve([] as Candle[]) : fetchHistory("1h", 5000, apiKey),
+        data.customM15 ? Promise.resolve([] as Candle[]) : fetchHistory("15min", 5000, apiKey),
       ]);
-      const h4 = data.customH4 && data.customH4.length ? data.customH4 : h4Fetched;
+      const h4  = data.customH4  && data.customH4.length  ? data.customH4  : h4Fetched;
+      const h1  = data.customH1  && data.customH1.length  ? data.customH1  : h1Fetched;
+      const m15 = data.customM15 && data.customM15.length ? data.customM15 : m15Fetched;
 
-      const minScores = [60, 65, 70, 75, 80, 85];
-      // Two hour-exclusion strategies: none, and auto (drop bottom-3 negative hours from baseline)
-      // First baseline run with minScore=70 to find worst hours.
-      const baseline = runBacktest(h4, h1, m15, { profile: data.profile, minScore: 70 });
+      const base = (STRATEGIES[data.engineKey].defaultParams.minScore as number | undefined) ?? 70;
+      const minScores = Array.from(new Set([
+        Math.max(50, base - 15), Math.max(50, base - 10), Math.max(50, base - 5),
+        base,
+        Math.min(95, base + 5), Math.min(95, base + 10), Math.min(95, base + 15),
+      ])).sort((a, b) => a - b);
+
+      const baseline = runBacktest(h4, h1, m15, { engineKey: data.engineKey });
       const worstHours = baseline.metrics.byHour
         .filter((h) => h.trades >= 2 && h.totalR < 0)
         .sort((a, b) => a.totalR - b.totalR)
@@ -157,12 +182,11 @@ export const runOptimizer = createServerFn({ method: "POST" })
       for (const ms of minScores) {
         for (const v of variants) {
           const r = runBacktest(h4, h1, m15, {
-            profile: data.profile,
-            minScore: ms,
+            engineKey: data.engineKey,
+            params: { minScore: ms },
             excludeHours: v.excludeHours,
           });
           const m = r.metrics;
-          // Composite score: favors expectancy*sqrt(trades), penalizes drawdown
           const sampleWeight = Math.sqrt(Math.min(m.trades, 100) / 100);
           const composite =
             m.trades >= 10
@@ -183,9 +207,9 @@ export const runOptimizer = createServerFn({ method: "POST" })
         }
       }
       rows.sort((a, b) => b.score - a.score);
-      return { rows, best: rows[0] ?? null, error: null };
+      return { rows, best: rows[0] ?? null, error: null, engineKey: data.engineKey };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Optimizer error";
-      return { rows: [], best: null, error: message };
+      return { rows: [], best: null, error: message, engineKey: data.engineKey };
     }
   });
