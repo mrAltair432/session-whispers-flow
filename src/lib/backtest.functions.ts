@@ -44,9 +44,6 @@ export const runFullBacktest = createServerFn({ method: "POST" })
       excludeHours?: number[];
       excludeWeekdays?: number[];
       autoTimeFilters?: boolean;
-      customH4?: Candle[];
-      customH1?: Candle[];
-      customM15?: Candle[];
     }) => ({
       minScore: typeof data.minScore === "number" ? data.minScore : undefined,
       engines: (data.engines && data.engines.length
@@ -55,9 +52,6 @@ export const runFullBacktest = createServerFn({ method: "POST" })
       excludeHours: Array.isArray(data.excludeHours) ? data.excludeHours : [],
       excludeWeekdays: Array.isArray(data.excludeWeekdays) ? data.excludeWeekdays : [],
       autoTimeFilters: data.autoTimeFilters !== false,
-      customH4: Array.isArray(data.customH4) ? data.customH4 : undefined,
-      customH1: Array.isArray(data.customH1) ? data.customH1 : undefined,
-      customM15: Array.isArray(data.customM15) ? data.customM15 : undefined,
     }),
   )
   .handler(async ({ data }): Promise<BacktestPayload> => {
@@ -71,13 +65,13 @@ export const runFullBacktest = createServerFn({ method: "POST" })
     }
     try {
       const [h4Fetched, h1Fetched, m15Fetched] = await Promise.all([
-        data.customH4 ? Promise.resolve([] as Candle[]) : fetchHistory("4h", 2000, apiKey),
-        data.customH1 ? Promise.resolve([] as Candle[]) : fetchHistory("1h", 5000, apiKey),
-        data.customM15 ? Promise.resolve([] as Candle[]) : fetchHistory("15min", 5000, apiKey),
+        fetchHistory("4h", 2000, apiKey),
+        fetchHistory("1h", 5000, apiKey),
+        fetchHistory("15min", 5000, apiKey),
       ]);
-      const h4  = data.customH4  && data.customH4.length  ? data.customH4  : h4Fetched;
-      const h1  = data.customH1  && data.customH1.length  ? data.customH1  : h1Fetched;
-      const m15 = data.customM15 && data.customM15.length ? data.customM15 : m15Fetched;
+      const h4 = h4Fetched;
+      const h1 = h1Fetched;
+      const m15 = m15Fetched;
       const results = data.engines.map((engineKey) =>
         runBacktest(h4, h1, m15, {
           engineKey,
@@ -134,14 +128,8 @@ export const runOptimizer = createServerFn({ method: "POST" })
   .inputValidator(
     (data: {
       engineKey?: EngineKey;
-      customH4?: Candle[];
-      customH1?: Candle[];
-      customM15?: Candle[];
     }) => ({
       engineKey: (data.engineKey ?? "smc_london") as EngineKey,
-      customH4: Array.isArray(data.customH4) ? data.customH4 : undefined,
-      customH1: Array.isArray(data.customH1) ? data.customH1 : undefined,
-      customM15: Array.isArray(data.customM15) ? data.customM15 : undefined,
     }),
   )
   .handler(async ({ data }): Promise<OptimizerPayload> => {
@@ -151,13 +139,13 @@ export const runOptimizer = createServerFn({ method: "POST" })
     }
     try {
       const [h4Fetched, h1Fetched, m15Fetched] = await Promise.all([
-        data.customH4 ? Promise.resolve([] as Candle[]) : fetchHistory("4h", 2000, apiKey),
-        data.customH1 ? Promise.resolve([] as Candle[]) : fetchHistory("1h", 5000, apiKey),
-        data.customM15 ? Promise.resolve([] as Candle[]) : fetchHistory("15min", 5000, apiKey),
+        fetchHistory("4h", 2000, apiKey),
+        fetchHistory("1h", 5000, apiKey),
+        fetchHistory("15min", 5000, apiKey),
       ]);
-      const h4  = data.customH4  && data.customH4.length  ? data.customH4  : h4Fetched;
-      const h1  = data.customH1  && data.customH1.length  ? data.customH1  : h1Fetched;
-      const m15 = data.customM15 && data.customM15.length ? data.customM15 : m15Fetched;
+      const h4 = h4Fetched;
+      const h1 = h1Fetched;
+      const m15 = m15Fetched;
 
       const base = (STRATEGIES[data.engineKey].defaultParams.minScore as number | undefined) ?? 70;
       const minScores = Array.from(new Set([
