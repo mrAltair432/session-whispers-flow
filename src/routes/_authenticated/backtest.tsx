@@ -26,6 +26,7 @@ export const Route = createFileRoute("/_authenticated/backtest")({
 });
 
 type CustomData = { tf: TfKey; candles: Candle[]; fileName: string };
+const REQUIRED_BACKTEST_TFS: TfKey[] = ["H4", "H1", "M15"];
 
 function BacktestPage() {
   const run = useServerFn(runFullBacktest);
@@ -47,10 +48,18 @@ function BacktestPage() {
   const customH1 = datasets.H1?.candles;
   const customM15 = datasets.M15?.candles;
   const hasCustom = !!(customH4?.length || customH1?.length || customM15?.length);
+  const missingRequiredTfs = REQUIRED_BACKTEST_TFS.filter((tf) => !datasets[tf]?.candles.length);
 
   const m = useMutation<BacktestPayload, Error, void>({
     mutationFn: async () => {
-      if (hasCustom && customH4 && customH1 && customM15) {
+      if (hasCustom) {
+        if (missingRequiredTfs.length > 0 || !customH4?.length || !customH1?.length || !customM15?.length) {
+          return {
+            results: [],
+            range: { from: 0, to: 0, m15Bars: 0, h1Bars: 0, h4Bars: 0 },
+            error: `Para correr local con CSV faltan: ${missingRequiredTfs.join(", ")}. Sube H4, H1 y M15 juntos para evitar enviar datos pesados al servidor.`,
+          };
+        }
         // Corremos en el navegador para evitar enviar 100k+ velas al server (sandbox proxy 502).
         const results = enginesSelected.map((engineKey) =>
           runBacktest(customH4, customH1, customM15, {
@@ -87,7 +96,15 @@ function BacktestPage() {
 
   const o = useMutation<OptimizerPayload, Error, void>({
     mutationFn: async () => {
-      if (hasCustom && customH4 && customH1 && customM15) {
+      if (hasCustom) {
+        if (missingRequiredTfs.length > 0 || !customH4?.length || !customH1?.length || !customM15?.length) {
+          return {
+            rows: [],
+            best: null,
+            error: `Para optimizar local con CSV faltan: ${missingRequiredTfs.join(", ")}. Sube H4, H1 y M15 juntos.`,
+            engineKey: optimizerEngine,
+          };
+        }
         const base = (STRATEGIES[optimizerEngine].defaultParams.minScore as number | undefined) ?? 70;
         const minScores = Array.from(new Set([
           Math.max(50, base - 15), Math.max(50, base - 10), Math.max(50, base - 5),
@@ -111,6 +128,8 @@ function BacktestPage() {
               engineKey: optimizerEngine,
               params: { minScore: ms },
               excludeHours: v.excludeHours,
+              excludeWeekdays,
+              autoTimeFilters,
             });
             const mm = r.metrics;
             const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);
