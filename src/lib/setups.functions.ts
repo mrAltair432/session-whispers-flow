@@ -101,3 +101,39 @@ export const getRecentSetups = createServerFn({ method: "GET" })
     if (error) throw new Error(error.message);
     return data;
   });
+
+export const sendTelegramTest = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const lovableKey = process.env.LOVABLE_API_KEY;
+    const telegramKey = process.env.TELEGRAM_API_KEY;
+    if (!lovableKey || !telegramKey) throw new Error("Telegram no está conectado");
+
+    const { data: cfg } = await context.supabase
+      .from("user_config")
+      .select("telegram_chat_id, telegram_enabled")
+      .eq("user_id", context.userId)
+      .single();
+    if (!cfg?.telegram_enabled) throw new Error("Activa el toggle de Telegram en Settings");
+    if (!cfg.telegram_chat_id) throw new Error("Falta el chat_id en Settings");
+
+    const text =
+      "<b>✅ Trading Compass conectado</b>\n\n" +
+      "Si ves este mensaje, las alertas de XAU/USD llegarán a este chat.\n" +
+      "<i>Prueba enviada desde Settings.</i>";
+
+    const res = await fetch("https://connector-gateway.lovable.dev/telegram/sendMessage", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${lovableKey}`,
+        "X-Connection-Api-Key": telegramKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ chat_id: cfg.telegram_chat_id, text, parse_mode: "HTML" }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Telegram error ${res.status}: ${body}`);
+    }
+    return { ok: true };
+  });
