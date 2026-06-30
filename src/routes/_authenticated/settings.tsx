@@ -112,7 +112,7 @@ function SettingsPage() {
               <Switch checked={form.auto_alert_high_confidence} onCheckedChange={(v) => setForm({ ...form, auto_alert_high_confidence: v })} />
             </Field>
             <div className="text-xs text-muted-foreground rounded-md border border-border bg-background/50 p-3 mt-2">
-              <strong>⚠️ Falta conectar Telegram.</strong> Cuando me pidas activar las alertas, conecto el bot de Telegram desde Lovable y queda listo.
+              <strong>✅ Telegram conectado.</strong> Guarda los cambios y usa el botón de abajo para verificar que el mensaje llega a tu chat.
             </div>
             <div className="pt-2">
               <Button type="button" variant="outline" size="sm"
