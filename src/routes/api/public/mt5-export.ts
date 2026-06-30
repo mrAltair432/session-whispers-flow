@@ -5,19 +5,19 @@ import { createFileRoute } from "@tanstack/react-router";
 const SCRIPT = `//+------------------------------------------------------------------+
 //| XAUUSD_History_Export.mq5                                        |
 //| Exporta histórico OHLC de XAUUSD a CSV para Trading Compass.     |
-//|                                                                  |
 //| Uso:                                                             |
 //|  1. Copiar en MQL5/Scripts/ (File > Open Data Folder en MT5).    |
 //|  2. Refrescar Scripts en el Navegador.                           |
-//|  3. Descargar histórico en Tools > History Center (Ctrl+U).      |
-//|  4. Arrastrar el script sobre un gráfico de XAUUSD.              |
-//|  5. CSV salen en MQL5/Files/. Subirlos en la pestaña Backtest.   |
+//|  3. En MT5: abre el grafico de XAUUSD en cada TF y desplaza      |
+//|     hacia atras (Home / PgUp) para que descargue el historico.   |
+//|  4. Arrastrar el script sobre un grafico de XAUUSD.              |
+//|  5. CSV salen en MQL5/Files/. Subirlos en la pestana Backtest.   |
 //+------------------------------------------------------------------+
 #property script_show_inputs
 #property strict
 
 input int     YearsBack = 10;
-input string  SymbolName = "XAUUSD";
+input string  InpSymbol = "XAUUSD";
 
 void ExportTF(ENUM_TIMEFRAMES tf, string tfName)
 {
@@ -25,9 +25,9 @@ void ExportTF(ENUM_TIMEFRAMES tf, string tfName)
    datetime from = to - (datetime)YearsBack * 365 * 24 * 60 * 60;
    MqlRates rates[];
    ArraySetAsSeries(rates, false);
-   int copied = CopyRates(SymbolName, tf, from, to, rates);
-   if(copied <= 0) { PrintFormat("Sin datos %s %s err=%d", SymbolName, tfName, GetLastError()); return; }
-   string fileName = StringFormat("%s_%s.csv", SymbolName, tfName);
+   int copied = CopyRates(InpSymbol, tf, from, to, rates);
+   if(copied <= 0) { PrintFormat("Sin datos %s %s err=%d", InpSymbol, tfName, GetLastError()); return; }
+   string fileName = StringFormat("%s_%s.csv", InpSymbol, tfName);
    int fh = FileOpen(fileName, FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
    if(fh == INVALID_HANDLE) { PrintFormat("No se pudo abrir %s", fileName); return; }
    FileWrite(fh, "Date","Open","High","Low","Close","Volume");
@@ -48,7 +48,7 @@ void ExportTF(ENUM_TIMEFRAMES tf, string tfName)
 
 void OnStart()
 {
-   PrintFormat("Exportando histórico de %s (%d años)...", SymbolName, YearsBack);
+   PrintFormat("Exportando historico de %s (%d anios)...", InpSymbol, YearsBack);
    ExportTF(PERIOD_D1,  "D1");
    ExportTF(PERIOD_H4,  "H4");
    ExportTF(PERIOD_H1,  "H1");
