@@ -11,8 +11,9 @@ import { SetupCard } from "@/components/SetupCard";
 import { RiskPanel } from "@/components/RiskPanel";
 import { SessionClock } from "@/components/SessionClock";
 import { Button } from "@/components/ui/button";
-import { Settings, LogOut, RefreshCw, BarChart3 } from "lucide-react";
+import { Settings, LogOut, RefreshCw, BarChart3, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { getTodayEvents, getNextEvent } from "@/lib/economic-calendar";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Trading Compass" }] }),
@@ -46,6 +47,9 @@ function Dashboard() {
   const h4Trend = data && data.h4.length ? detectTrend(data.h4) : "ranging";
   const h1Trend = data && data.h1.length ? detectTrend(data.h1) : "ranging";
   const m15Trend = data && data.m15.length ? detectTrend(data.m15) : "ranging";
+
+  const todayEvents = useMemo(() => getTodayEvents(), []);
+  const nextEvent = useMemo(() => getNextEvent(), []);
 
   const setupHighlights = signal ? [
     { price: signal.entry, color: "#f0b929", label: "Entry" },
@@ -99,6 +103,20 @@ function Dashboard() {
             <strong>Datos no disponibles:</strong> {data.error}
           </div>
         )}
+
+        {/* Economic calendar warning */}
+        {todayEvents.length > 0 ? (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <strong className="text-amber-300">Hoy:</strong>
+            <span>{todayEvents.map((e) => `${e.label} (~${e.timeUTC} UTC)`).join(" · ")}</span>
+            <span className="text-xs text-muted-foreground ml-auto">Evitar entradas 1h antes y 30min después.</span>
+          </div>
+        ) : nextEvent ? (
+          <div className="text-xs text-muted-foreground">
+            Próximo evento macro: <strong className="text-foreground">{nextEvent.label}</strong> el {nextEvent.date} (~{nextEvent.timeUTC} UTC)
+          </div>
+        ) : null}
 
         {/* Daily limits bar */}
         {config && stats && (
