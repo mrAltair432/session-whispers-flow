@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
 import { runBacktest, type BacktestResult } from "./backtest";
-import type { Candle } from "./analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "./strategies";
 
 type TDValue = { datetime: string; open: string; high: string; low: string; close: string };
