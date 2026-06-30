@@ -9,6 +9,7 @@ import {
   type OptimizerPayload,
 } from "@/lib/backtest.functions";
 import type { BacktestResult } from "@/lib/backtest";
+import { runBacktest } from "@/lib/backtest";
 import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
@@ -45,31 +46,98 @@ function BacktestPage() {
   const customH4 = datasets.H4?.candles;
   const customH1 = datasets.H1?.candles;
   const customM15 = datasets.M15?.candles;
+  const hasCustom = !!(customH4?.length || customH1?.length || customM15?.length);
 
   const m = useMutation<BacktestPayload, Error, void>({
-    mutationFn: () =>
-      run({
+    mutationFn: async () => {
+      if (hasCustom && customH4 && customH1 && customM15) {
+        // Corremos en el navegador para evitar enviar 100k+ velas al server (sandbox proxy 502).
+        const results = enginesSelected.map((engineKey) =>
+          runBacktest(customH4, customH1, customM15, {
+            engineKey,
+            params: minScoreOverride === "" ? undefined : { minScore: Number(minScoreOverride) },
+            excludeHours,
+            excludeWeekdays,
+            autoTimeFilters,
+          }),
+        );
+        return {
+          results,
+          range: {
+            from: customM15[0]?.time ?? 0,
+            to: customM15[customM15.length - 1]?.time ?? 0,
+            m15Bars: customM15.length,
+            h1Bars: customH1.length,
+            h4Bars: customH4.length,
+          },
+          error: null,
+        };
+      }
+      return run({
         data: {
           minScore: minScoreOverride === "" ? undefined : Number(minScoreOverride),
           engines: enginesSelected,
           excludeHours,
           excludeWeekdays,
           autoTimeFilters,
-          customH4,
-          customH1,
-          customM15,
         },
-      }),
+      });
+    },
   });
 
   const o = useMutation<OptimizerPayload, Error, void>({
-    mutationFn: () =>
-      opt({
+    mutationFn: async () => {
+      if (hasCustom && customH4 && customH1 && customM15) {
+        const base = (STRATEGIES[optimizerEngine].defaultParams.minScore as number | undefined) ?? 70;
+        const minScores = Array.from(new Set([
+          Math.max(50, base - 15), Math.max(50, base - 10), Math.max(50, base - 5),
+          base,
+          Math.min(95, base + 5), Math.min(95, base + 10), Math.min(95, base + 15),
+        ])).sort((a, b) => a - b);
+        const baseline = runBacktest(customH4, customH1, customM15, { engineKey: optimizerEngine });
+        const worstHours = baseline.metrics.byHour
+          .filter((h) => h.trades >= 2 && h.totalR < 0)
+          .sort((a, b) => a.totalR - b.totalR)
+          .slice(0, 3)
+          .map((h) => h.hour);
+        const variants = [
+          { excludeHours: [] as number[] },
+          { excludeHours: worstHours },
+        ];
+        const rows = [] as OptimizerPayload["rows"];
+        for (const ms of minScores) {
+          for (const v of variants) {
+            const r = runBacktest(customH4, customH1, customM15, {
+              engineKey: optimizerEngine,
+              params: { minScore: ms },
+              excludeHours: v.excludeHours,
+            });
+            const mm = r.metrics;
+            const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);
+            const composite = mm.trades >= 10 ? mm.expectancy * sampleWeight - 0.1 * mm.maxDrawdownR : -Infinity;
+            rows.push({
+              minScore: ms,
+              excludeHours: v.excludeHours,
+              trades: mm.trades,
+              winrate: mm.winrate,
+              totalR: mm.totalR,
+              expectancy: mm.expectancy,
+              profitFactor: isFinite(mm.profitFactor) ? mm.profitFactor : 99,
+              maxDrawdownR: mm.maxDrawdownR,
+              sharpe: mm.sharpe,
+              score: composite,
+            });
+          }
+        }
+        rows.sort((a, b) => b.score - a.score);
+        return { rows, best: rows[0] ?? null, error: null, engineKey: optimizerEngine };
+      }
+      return opt({
         data: {
           engineKey: optimizerEngine,
-          customH4, customH1, customM15,
         },
-      }),
+      });
+    },
   });
 
   const data = m.data;
