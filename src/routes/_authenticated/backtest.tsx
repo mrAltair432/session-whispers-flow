@@ -206,7 +206,7 @@ function BacktestPage() {
               hasta 10 años de M1/M5/M15/H1/H4/D1.
             </p>
             <a
-              href="/mt5/XAUUSD_History_Export.mq5"
+              href="/api/public/mt5-export"
               download
               className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:opacity-90"
             >

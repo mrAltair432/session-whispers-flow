@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedBacktestRouteImport } from './routes/_authenticated/backtest'
+import { Route as ApiPublicMt5ExportRouteImport } from './routes/api/public/mt5-export'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -45,6 +46,11 @@ const AuthenticatedBacktestRoute = AuthenticatedBacktestRouteImport.update({
   path: '/backtest',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const ApiPublicMt5ExportRoute = ApiPublicMt5ExportRouteImport.update({
+  id: '/api/public/mt5-export',
+  path: '/api/public/mt5-export',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/backtest': typeof AuthenticatedBacktestRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
+  '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/backtest': typeof AuthenticatedBacktestRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
+  '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -68,12 +76,25 @@ export interface FileRoutesById {
   '/_authenticated/backtest': typeof AuthenticatedBacktestRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
+  '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/backtest' | '/dashboard' | '/settings'
+  fullPaths:
+    | '/'
+    | '/auth'
+    | '/backtest'
+    | '/dashboard'
+    | '/settings'
+    | '/api/public/mt5-export'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/backtest' | '/dashboard' | '/settings'
+  to:
+    | '/'
+    | '/auth'
+    | '/backtest'
+    | '/dashboard'
+    | '/settings'
+    | '/api/public/mt5-export'
   id:
     | '__root__'
     | '/'
@@ -82,12 +103,14 @@ export interface FileRouteTypes {
     | '/_authenticated/backtest'
     | '/_authenticated/dashboard'
     | '/_authenticated/settings'
+    | '/api/public/mt5-export'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicMt5ExportRoute: typeof ApiPublicMt5ExportRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -134,6 +157,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedBacktestRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/public/mt5-export': {
+      id: '/api/public/mt5-export'
+      path: '/api/public/mt5-export'
+      fullPath: '/api/public/mt5-export'
+      preLoaderRoute: typeof ApiPublicMt5ExportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -156,6 +186,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicMt5ExportRoute: ApiPublicMt5ExportRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
