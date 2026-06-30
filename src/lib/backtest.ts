@@ -7,6 +7,8 @@ export type BacktestOptions = {
   warmupBars?: number;     // bars to skip at start (default 100)
   maxHoldBars?: number;    // close trade after N M15 bars if no exit (default 96 = 24h)
   cooldownBars?: number;   // bars to wait between trades (default 16 = 4h)
+  excludeHours?: number[]; // UTC hours to skip (e.g. [14, 21])
+  excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
 };
 
 export type BacktestTrade = {
@@ -104,8 +106,8 @@ function simulateTrade(
       // Check SL first (conservative)
       if (c.low <= sl) {
         if (!tp1Hit) return closeRemaining(sl, c.time, "sl");
-        // BE/runner SL: partials already realized
-        const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "be";
+        // partials already realized: TP1 secured, possibly TP2
+        const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
         return closeRemaining(sl, c.time, outcome);
       }
       if (!tp1Hit && c.high >= tp1) {
@@ -127,7 +129,7 @@ function simulateTrade(
     } else {
       if (c.high >= sl) {
         if (!tp1Hit) return closeRemaining(sl, c.time, "sl");
-        const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "be";
+        const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
         return closeRemaining(sl, c.time, outcome);
       }
       if (!tp1Hit && c.low <= tp1) {
@@ -236,6 +238,10 @@ export function runBacktest(
 
   for (let i = warmup; i < m15.length - 2; i++) {
     if (i - lastExitIdx < cooldown) continue;
+    const barTime = m15[i].time;
+    const d0 = new Date(barTime * 1000);
+    if (opts.excludeHours?.includes(d0.getUTCHours())) continue;
+    if (opts.excludeWeekdays?.includes(d0.getUTCDay())) continue;
     const m15Window = m15.slice(0, i + 1);
     const t = m15[i].time;
     const h1Window = opts.profile === "m15" ? [] : sliceUpTo(h1, t);
