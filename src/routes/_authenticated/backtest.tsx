@@ -10,10 +10,11 @@ import {
 } from "@/lib/backtest.functions";
 import type { BacktestResult } from "@/lib/backtest";
 import type { Candle } from "@/lib/analysis";
-import { parseXauHistoricalCsv, detectTimeframeMinutes } from "@/lib/csv-parser";
+import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
+import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Play, Loader2, Upload, Wand2, X } from "lucide-react";
+import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
 } from "recharts";
@@ -23,62 +24,91 @@ export const Route = createFileRoute("/_authenticated/backtest")({
   component: BacktestPage,
 });
 
-const PROFILE_LABEL: Record<string, string> = {
-  full: "H4 + H1 + M15 (completo)",
-  h1m15: "H1 + M15",
-  m15: "Solo M15",
-};
+type CustomData = { tf: TfKey; candles: Candle[]; fileName: string };
 
 function BacktestPage() {
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
-  const [minScore, setMinScore] = useState(70);
+  const allStrategies = listStrategies();
+
+  const [minScoreOverride, setMinScoreOverride] = useState<number | "">("");
+  const [enginesSelected, setEnginesSelected] = useState<EngineKey[]>(allStrategies.map((s) => s.key));
+  const [optimizerEngine, setOptimizerEngine] = useState<EngineKey>("smc_london");
+  const [autoTimeFilters, setAutoTimeFilters] = useState(true);
   const [excludeHours, setExcludeHours] = useState<number[]>([]);
   const [excludeWeekdays, setExcludeWeekdays] = useState<number[]>([]);
-  const [customH4, setCustomH4] = useState<Candle[] | null>(null);
-  const [csvInfo, setCsvInfo] = useState<string | null>(null);
+  const [datasets, setDatasets] = useState<Record<TfKey, CustomData | undefined>>(
+    {} as Record<TfKey, CustomData | undefined>,
+  );
+  const [parseErrors, setParseErrors] = useState<string[]>([]);
+
+  const customH4 = datasets.H4?.candles;
+  const customH1 = datasets.H1?.candles;
+  const customM15 = datasets.M15?.candles;
 
   const m = useMutation<BacktestPayload, Error, void>({
     mutationFn: () =>
       run({
         data: {
-          minScore,
-          profiles: ["full", "h1m15", "m15"],
+          minScore: minScoreOverride === "" ? undefined : Number(minScoreOverride),
+          engines: enginesSelected,
           excludeHours,
           excludeWeekdays,
-          customH4: customH4 ?? undefined,
+          autoTimeFilters,
+          customH4,
+          customH1,
+          customM15,
         },
       }),
   });
 
   const o = useMutation<OptimizerPayload, Error, void>({
-    mutationFn: () => opt({ data: { profile: "full", customH4: customH4 ?? undefined } }),
+    mutationFn: () =>
+      opt({
+        data: {
+          engineKey: optimizerEngine,
+          customH4, customH1, customM15,
+        },
+      }),
   });
 
   const data = m.data;
 
-  const handleCsv = async (file: File) => {
-    const text = await file.text();
-    const candles = parseXauHistoricalCsv(text);
-    if (!candles.length) {
-      setCsvInfo(`❌ ${file.name}: no se pudieron parsear velas`);
-      return;
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || !files.length) return;
+    const errs: string[] = [];
+    const updates: Partial<Record<TfKey, CustomData>> = {};
+    for (const file of Array.from(files)) {
+      const text = await file.text();
+      const candles = parseXauHistoricalCsv(text);
+      if (!candles.length) {
+        errs.push(`❌ ${file.name}: 0 velas parseadas`);
+        continue;
+      }
+      const mins = detectTimeframeMinutes(candles);
+      const tf = classifyTimeframe(mins);
+      if (!tf) {
+        errs.push(`⚠️ ${file.name}: TF=${mins.toFixed(1)}min no reconocido`);
+        continue;
+      }
+      if (candles.length > 200_000) {
+        errs.push(`⚠️ ${file.name}: ${candles.length} velas (>200k) — puede saturar el navegador`);
+      }
+      updates[tf] = { tf, candles, fileName: file.name };
     }
-    const tf = detectTimeframeMinutes(candles);
-    if (tf < 60 || tf > 360) {
-      setCsvInfo(`⚠️ ${file.name}: ${candles.length} velas, TF=${tf}min (esperado 240min H4)`);
-      return;
-    }
-    setCustomH4(candles);
-    const from = new Date(candles[0].time * 1000).toISOString().slice(0, 10);
-    const to = new Date(candles[candles.length - 1].time * 1000).toISOString().slice(0, 10);
-    setCsvInfo(`✓ ${file.name}: ${candles.length} velas H4, ${from} → ${to}`);
+    setDatasets((prev) => ({ ...prev, ...updates }));
+    setParseErrors(errs);
   };
+
+  const clearDataset = (tf: TfKey) =>
+    setDatasets((prev) => ({ ...prev, [tf]: undefined }));
 
   const toggleHour = (h: number) =>
     setExcludeHours((s) => (s.includes(h) ? s.filter((x) => x !== h) : [...s, h]));
   const toggleWd = (w: number) =>
     setExcludeWeekdays((s) => (s.includes(w) ? s.filter((x) => x !== w) : [...s, w]));
+  const toggleEngine = (k: EngineKey) =>
+    setEnginesSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -89,56 +119,163 @@ function BacktestPage() {
             <span className="font-semibold tracking-tight">Backtesting · XAU/USD</span>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            <label className="text-muted-foreground">Min score</label>
+            <label className="text-muted-foreground">Min score (override)</label>
             <input
               type="number"
               min={50}
               max={100}
-              value={minScore}
-              onChange={(e) => setMinScore(Number(e.target.value))}
-              className="w-16 bg-background border border-border rounded px-2 py-1 font-mono text-sm"
+              value={minScoreOverride}
+              placeholder="auto"
+              onChange={(e) => setMinScoreOverride(e.target.value === "" ? "" : Number(e.target.value))}
+              className="w-20 bg-background border border-border rounded px-2 py-1 font-mono text-sm"
             />
-            <Button onClick={() => m.mutate()} disabled={m.isPending} size="sm">
+            <Button onClick={() => m.mutate()} disabled={m.isPending || !enginesSelected.length} size="sm">
               {m.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
               {m.isPending ? "Ejecutando..." : "Correr backtest"}
             </Button>
             <Button onClick={() => o.mutate()} disabled={o.isPending} size="sm" variant="outline">
               {o.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Wand2 className="w-4 h-4 mr-1" />}
-              {o.isPending ? "Optimizando..." : "Optimizar"}
+              {o.isPending ? "Optimizando..." : `Optimizar ${STRATEGIES[optimizerEngine].shortName}`}
             </Button>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-[1600px] px-4 py-6 space-y-6">
-        {/* Controls: CSV upload + filters */}
-        <section className="grid lg:grid-cols-3 gap-4">
-          <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+        {/* Strategies selector */}
+        <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="font-semibold">Estrategias a comparar</h3>
+            <div className="text-xs text-muted-foreground">Optimizar:&nbsp;
+              <select
+                value={optimizerEngine}
+                onChange={(e) => setOptimizerEngine(e.target.value as EngineKey)}
+                className="bg-background border border-border rounded px-2 py-1 text-xs"
+              >
+                {allStrategies.map((s) => (
+                  <option key={s.key} value={s.key}>{s.shortName}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-3">
+            {allStrategies.map((s) => {
+              const on = enginesSelected.includes(s.key);
+              return (
+                <label
+                  key={s.key}
+                  className={`rounded border p-3 cursor-pointer transition ${
+                    on ? "border-primary/60 bg-primary/5" : "border-border hover:bg-background/50"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => toggleEngine(s.key)}
+                      className="mt-1"
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{s.shortName}</span>
+                        <span className="text-xs text-muted-foreground font-mono">
+                          minScore default: {String(s.defaultParams.minScore)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">{s.description}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Killzone UTC: <span className="font-mono">{s.killzoneHoursUTC.join(", ")}</span>
+                      </p>
+                    </div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* MT5 export download + multi-TF CSV upload */}
+        <section className="grid lg:grid-cols-2 gap-4">
+          <div className="rounded-lg border border-border bg-card p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium">
-              <Upload className="w-4 h-4" /> H4 extendido (CSV opcional)
+              <Download className="w-4 h-4" /> Exportar histórico desde MT5
             </div>
             <p className="text-xs text-muted-foreground">
-              Sube tu CSV de H4 (formato MT5/MQL5: <code>Date,Open,High,Low,Close,...</code>) para extender la historia más allá de los ~5 meses que da Twelve Data.
+              Descarga este script, cópialo en <code>MQL5/Scripts/</code> de tu MT5 (File &gt; Open Data Folder),
+              reinicia, y arrástralo sobre un gráfico de XAUUSD. Genera CSVs en <code>MQL5/Files/</code> con
+              hasta 10 años de M1/M5/M15/H1/H4/D1.
+            </p>
+            <a
+              href="/mt5/XAUUSD_History_Export.mq5"
+              download
+              className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:opacity-90"
+            >
+              <Download className="w-3 h-3" /> XAUUSD_History_Export.mq5
+            </a>
+          </div>
+          <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Upload className="w-4 h-4" /> Subir CSVs (multi-timeframe)
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Acepta múltiples archivos. Detecta el timeframe automáticamente (M1/M5/M15/H1/H4/D1).
+              Solo se usan H4, H1 y M15 en el backtest; los demás se ignoran por ahora.
             </p>
             <input
               type="file"
               accept=".csv"
-              onChange={(e) => e.target.files?.[0] && handleCsv(e.target.files[0])}
+              multiple
+              onChange={(e) => handleFiles(e.target.files)}
               className="block text-xs text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:rounded file:border-0 file:bg-primary file:text-primary-foreground file:cursor-pointer"
             />
-            {csvInfo && (
-              <div className="flex items-center gap-2 text-xs font-mono">
-                <span>{csvInfo}</span>
-                {customH4 && (
-                  <button onClick={() => { setCustomH4(null); setCsvInfo(null); }} className="text-muted-foreground hover:text-foreground">
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
+            {(Object.keys(datasets) as TfKey[]).filter((k) => datasets[k]).length > 0 && (
+              <div className="text-xs space-y-1">
+                {(Object.keys(datasets) as TfKey[])
+                  .filter((k) => datasets[k])
+                  .map((tf) => {
+                    const d = datasets[tf]!;
+                    const used = tf === "H4" || tf === "H1" || tf === "M15";
+                    return (
+                      <div key={tf} className="flex items-center gap-2 font-mono">
+                        <span className={used ? "text-emerald-400" : "text-muted-foreground"}>
+                          {used ? "✓" : "·"} {tf}
+                        </span>
+                        <span className="text-muted-foreground truncate">{d.fileName}</span>
+                        <span className="text-muted-foreground">— {d.candles.length} velas</span>
+                        <button onClick={() => clearDataset(tf)} className="ml-auto text-muted-foreground hover:text-foreground">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+            {parseErrors.length > 0 && (
+              <div className="text-xs text-amber-400 space-y-0.5">
+                {parseErrors.map((e, i) => <div key={i}>{e}</div>)}
               </div>
             )}
           </div>
+        </section>
+
+        {/* Time filters */}
+        <section className="grid lg:grid-cols-3 gap-4">
           <div className="rounded-lg border border-border bg-card p-4 space-y-2">
-            <div className="text-sm font-medium">Excluir horas UTC</div>
+            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoTimeFilters}
+                onChange={(e) => setAutoTimeFilters(e.target.checked)}
+              />
+              Filtros automáticos del oro
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Excluye: sábado completo, viernes ≥21 UTC (cierre semanal), domingo &lt;22 UTC,
+              lunes &lt;2 UTC (gap), y pausa diaria UTC 22 lun-jue.
+            </p>
+          </div>
+          <div className="rounded-lg border border-border bg-card p-4 space-y-2">
+            <div className="text-sm font-medium">Excluir horas UTC (manual)</div>
             <div className="grid grid-cols-12 gap-1">
               {Array.from({ length: 24 }, (_, h) => (
                 <button
@@ -154,7 +291,6 @@ function BacktestPage() {
                 </button>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">Click para excluir. Tip: horas con R negativo en el backtest anterior.</p>
           </div>
           <div className="rounded-lg border border-border bg-card p-4 space-y-2">
             <div className="text-sm font-medium">Excluir días</div>
@@ -173,7 +309,6 @@ function BacktestPage() {
                 </button>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground">Sáb/Dom suelen tener gaps; Lun puede ser ruidoso.</p>
           </div>
         </section>
 
@@ -182,7 +317,9 @@ function BacktestPage() {
           <section className="rounded-lg border border-primary/30 bg-card p-4 space-y-3">
             <div className="flex items-center gap-2">
               <Wand2 className="w-4 h-4 text-primary" />
-              <h3 className="font-semibold">Optimizador (grid search · perfil completo)</h3>
+              <h3 className="font-semibold">
+                Optimizador · {STRATEGIES[o.data.engineKey].shortName}
+              </h3>
             </div>
             {o.data.best && (
               <div className="text-xs text-muted-foreground">
@@ -190,7 +327,6 @@ function BacktestPage() {
                 {o.data.best.excludeHours.length > 0 && (
                   <> · excluir horas <span className="text-foreground font-mono">[{o.data.best.excludeHours.join(",")}]</span></>
                 )}
-                {" "}→ aplica los valores arriba y vuelve a correr backtest.
               </div>
             )}
             <div className="overflow-x-auto">
@@ -229,9 +365,6 @@ function BacktestPage() {
                 </tbody>
               </table>
             </div>
-            <p className="text-xs text-muted-foreground">
-              ⚠️ El score compuesto es: <code>expectancy × √(min(trades,100)/100) − 0.1 × maxDD</code>. Penaliza pocos trades y drawdowns altos.
-            </p>
           </section>
         )}
         {o.data?.error && (
@@ -240,13 +373,10 @@ function BacktestPage() {
 
         {!data && !m.isPending && (
           <div className="rounded-lg border border-dashed border-border p-12 text-center">
-            <h2 className="text-lg font-semibold mb-2">Compara la estrategia por timeframes</h2>
+            <h2 className="text-lg font-semibold mb-2">Compara estrategias lado a lado</h2>
             <p className="text-sm text-muted-foreground max-w-xl mx-auto mb-4">
-              Corremos el motor sobre la historia disponible (Twelve Data, ~52 días M15) en tres modos:
-              completo (H4+H1+M15), H1+M15, y solo M15. Esto te dice cuánto valor agregan los filtros multi-TF.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Gestión simulada: 50% en TP1 → SL a BE · 30% en TP2 · 20% runner a TP3. Cooldown 4h, max hold 24h.
+              Selecciona una o varias estrategias arriba, sube tus CSVs de MT5 si quieres más historia,
+              y dale "Correr backtest". La gestión simulada es 50% TP1 → SL a BE · 30% TP2 · 20% runner a TP3.
             </p>
           </div>
         )}
@@ -254,7 +384,7 @@ function BacktestPage() {
         {m.isPending && (
           <div className="rounded-lg border border-border bg-card p-12 text-center">
             <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-primary" />
-            <p className="text-sm text-muted-foreground">Procesando histórico... esto puede tardar 10-20s</p>
+            <p className="text-sm text-muted-foreground">Procesando histórico... esto puede tardar 10-30s</p>
           </div>
         )}
 
@@ -277,12 +407,11 @@ function BacktestPage() {
               {" "}{data.range.m15Bars} velas M15, {data.range.h1Bars} H1, {data.range.h4Bars} H4
             </div>
 
-            {/* Summary comparison table */}
             <div className="rounded-lg border border-border bg-card overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-background/50 text-xs uppercase text-muted-foreground">
                   <tr>
-                    <th className="text-left px-4 py-3">Perfil</th>
+                    <th className="text-left px-4 py-3">Estrategia</th>
                     <th className="text-right px-4 py-3">Trades</th>
                     <th className="text-right px-4 py-3">Winrate</th>
                     <th className="text-right px-4 py-3">Total R</th>
@@ -295,8 +424,8 @@ function BacktestPage() {
                 </thead>
                 <tbody>
                   {data.results.map((r) => (
-                    <tr key={r.profile} className="border-t border-border">
-                      <td className="px-4 py-3 font-medium">{PROFILE_LABEL[r.profile]}</td>
+                    <tr key={r.engineKey} className="border-t border-border">
+                      <td className="px-4 py-3 font-medium">{STRATEGIES[r.engineKey].shortName}</td>
                       <td className="text-right px-4 py-3 font-mono">{r.metrics.trades}</td>
                       <td className="text-right px-4 py-3 font-mono">{(r.metrics.winrate * 100).toFixed(1)}%</td>
                       <td className={`text-right px-4 py-3 font-mono font-semibold ${r.metrics.totalR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
@@ -313,8 +442,7 @@ function BacktestPage() {
               </table>
             </div>
 
-            {/* Per-profile detail */}
-            {data.results.map((r) => <ProfileDetail key={r.profile} result={r} />)}
+            {data.results.map((r) => <ProfileDetail key={r.engineKey} result={r} />)}
           </>
         )}
       </main>
@@ -327,7 +455,7 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
   return (
     <section className="rounded-lg border border-border bg-card p-5 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h3 className="font-semibold">{PROFILE_LABEL[result.profile]}</h3>
+        <h3 className="font-semibold">{STRATEGIES[result.engineKey].name}</h3>
         <div className="flex gap-2 flex-wrap">
           <Badge variant="outline">TP1: {m.outcomeCounts.tp1}</Badge>
           <Badge variant="outline">TP2: {m.outcomeCounts.tp2}</Badge>
