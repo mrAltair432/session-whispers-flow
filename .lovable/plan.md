@@ -1,95 +1,106 @@
-# Trading Compass — Dashboard XAU/USD v1
+## Objetivo
 
-Dashboard para decidir entradas manuales en la sesión de Londres (3 a.m.) sobre XAU/USD, con análisis multi-timeframe, motor de señales basado en tus reglas, calculadora de riesgo dinámica y alertas a Telegram. Solo tú lo usas por ahora.
+Cuatro bloques de trabajo en este orden:
 
-## Lo que vamos a construir
+1. **Exportador MT5 → CSV** (script `.mq5` descargable + parser multi-TF).
+2. **Filtros horarios automáticos** del oro (cierre semanal, gap lunes, avisos FOMC/NFP).
+3. **Multi-estrategia** (tabla `strategies`, selector, comparador, optimizador por estrategia).
+4. **Estrategia 2: Continuación NY** (pullback EMA50 H1 + entrada M15 en killzone NY).
 
-### 1. Vista multi-timeframe (núcleo visual)
-Tres gráficos sincronizados H4 / H1 / M15 de XAU/USD, lado a lado en desktop y apilados en mobile.
-- Velas japonesas con `lightweight-charts` (la librería oficial de TradingView, gratis y rápida).
-- Solo **EMA 20 y EMA 50** dibujadas. Nada de saturar con indicadores basura.
-- Detección automática de estructura: marcadores de HH (Higher High), HL, LH, LL para leer tendencia de un vistazo.
-- Cajas de **liquidez** (swing highs/lows recientes) y **FVG** (Fair Value Gaps) en H1 y M15.
-- Reloj de sesión: bloque visual marcando Asia / Londres / Nueva York en hora local.
+## 1. Exportador MT5
 
-### 2. Motor de señales (tus reglas, no ruido)
-Corre cada minuto durante la ventana de Londres (2:30–6:00 a.m. tu hora) y evalúa:
-1. **Contexto H4**: tendencia por EMA 20 vs 50 + estructura.
-2. **Liquidez H1**: ¿se barrió un swing relevante en la última hora?
-3. **Confirmación M15**: FVG / Order Block + cierre a favor del contexto.
-4. **Filtros de descarte**: spread alto, noticia roja en 30 min (ForexFactory feed), o ya hiciste 2 ops hoy.
+- Nuevo archivo `public/mt5/XAUUSD_History_Export.mq5` descargable desde la app.
+- Script MQL5 que recorre M1/M5/M15/H1/H4/D1 y escribe un CSV por TF en `MQL5/Files/` con formato:
+  ```
+  Date,Open,High,Low,Close,Volume
+  2015.01.05 03:00,1186.45,1187.20,1186.10,1186.85,12450
+  ```
+- Sección "Datos históricos" en `/backtest` con instrucciones paso a paso y botón de descarga.
 
-Cuando los 4 puntos alinean, genera un **Setup Card** con:
-- Bias (long/short) y confianza (alta / media).
-- Entrada sugerida, SL (debajo/encima de la liquidez barrida), TP1 (1R), TP2 (2R), TP3 (3R o siguiente liquidez).
-- Tamaño de lote ya calculado para 0.5% de tu balance Exness cents.
-- Plan de gestión: mover SL a BE al alcanzar TP1, cerrar 50% en TP1, 30% en TP2, dejar 20% runner.
-- Botón "Enviar a Telegram" + auto-envío si confianza = alta.
+### Parser multi-TF
 
-### 3. Calculadora de riesgo + gestión dinámica
-Panel siempre visible:
-- Balance actual (lo ingresas o lo sincronizamos después con MT5).
-- Slider de riesgo (default 0.5%, máximo 1%).
-- Calcula lote exacto para Exness cents según distancia al SL.
-- Simulador "what if": arrastra entrada/SL/TP sobre el gráfico y ve R múltiplo + ganancia esperada en USD.
-- Recordatorio de reglas: contador de ops del día (máx 2), pérdida acumulada (stop a -1.5% diario).
+- Extender `src/lib/csv-parser.ts`: aceptar formato MT5 (`YYYY.MM.DD HH:MM`) además del actual (`MM/DD/YYYY HH:MM`).
+- `detectTimeframeMinutes` ya existe; añadir helper `classifyTimeframe(mins) → "M1"|"M5"|"M15"|"H1"|"H4"|"D1"`.
+- En `/backtest`: drop-zone que acepta múltiples CSV simultáneamente, los clasifica y los muestra en una tabla de "datasets cargados" (TF, rango, # velas).
+- Pasar `customM15` y `customH1` además de `customH4` al backtest engine.
 
-### 4. Journal mínimo (para que las estadísticas tengan sentido)
-Aunque dijiste solo las 3 primeras, sin journal el motor no aprende qué setups te funcionan. Versión mínima:
-- Cada Setup que ejecutas se guarda automático con screenshot del gráfico al momento de la señal.
-- Marcas resultado: ganador / perdedor / BE.
-- Lo dejamos listo, lo activamos cuando quieras (no estorba en v1).
+## 2. Filtros horarios automáticos
 
-### 5. Alertas Telegram
-Bot dedicado que te manda:
-- Setup detectado con bias, entrada, SL, TPs y screenshot del M15.
-- Recordatorio 15 min antes de Londres.
-- Alerta si tocas pérdida diaria máxima.
+En `src/lib/backtest.ts` agregar antes del scoring:
 
-## Cómo se ve la pantalla
+- **Cierre semanal**: excluir velas con `weekday=5 && hourUTC >= 21` y `weekday=0` completo (sábado).
+- **Pausa diaria**: excluir hora UTC 22 (= 17 NY, mercado cerrado).
+- **Gap lunes**: excluir lunes UTC 0-2 (primeras 2h tras apertura).
+- Toggles en UI para desactivarlos (default ON).
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│  Trading Compass    XAU/USD  2425.30  ▲0.42%   🟢 Londres 03:47 │
-├──────────────────────────┬──────────────────────────────────────┤
-│  H4         H1      M15  │  SETUP ACTIVO                        │
-│ ┌──────┐ ┌──────┐ ┌─────┐│  ▲ LONG  Confianza: ALTA            │
-│ │ /\  /│ │  /\  │ │ /\ ││  Entrada:  2424.80                   │
-│ │/  \/ │ │ /  \ │ │/  \││  SL:       2421.20  (-36 pips)       │
-│ │ EMA20│ │ FVG  │ │ OB  ││  TP1:      2428.40  (+1R)            │
-│ └──────┘ └──────┘ └─────┘│  TP2:      2432.00  (+2R)            │
-│ Tendencia: Alcista       │  Lote: 0.18  Riesgo: $5 (0.5%)       │
-│ Liquidez barrida: ✓      │  [ Enviar a Telegram ]               │
-├──────────────────────────┴──────────────────────────────────────┤
-│  Riesgo hoy: $0 / $15 max    Ops: 0/2    P&L: +$0               │
-└─────────────────────────────────────────────────────────────────┘
+**FOMC/NFP**: hardcodear fechas conocidas 2024-2026 en `src/lib/economic-calendar.ts`, mostrar badge "⚠️ NFP hoy" en dashboard y en backtest marcar esos días en un color distinto en la gráfica por-día.
+
+## 3. Multi-estrategia
+
+### Tabla
+
+```sql
+CREATE TABLE public.strategies (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name text NOT NULL,
+  description text,
+  engine_key text NOT NULL,  -- 'smc_london' | 'ny_continuation' | future...
+  params jsonb NOT NULL DEFAULT '{}',  -- minScore, excludeHours, etc.
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 ```
 
-## Stack técnico
++ GRANT + RLS por `user_id`. Seed automático al primer login con E1 y E2.
 
-- **Frontend**: TanStack Start (lo que ya tienes) + `lightweight-charts` para gráficos.
-- **Backend**: Server functions para llamar Twelve Data y correr el motor de señales.
-- **Datos**: Twelve Data API (free tier, 800 req/día — suficiente con polling de 1 min en ventana de Londres).
-- **Storage**: Lovable Cloud para guardar setups, journal y configuración personal.
-- **Auth**: Email/password (solo tú).
-- **Alertas**: Conector Telegram de Lovable.
-- **Cron**: Polling activo solo en ventana 2:30–6:00 a.m. para no agotar el free tier.
+### Engine refactor
 
-## Lo que necesito de ti antes de construir
+- `src/lib/strategies/index.ts` con registro `{ smc_london: smcLondonEngine, ny_continuation: nyContinuationEngine }`.
+- Cada engine implementa `evaluateBar(bars, params) → Setup | null`.
+- `backtest.ts` recibe `engineKey + params` en vez de tener la lógica hardcodeada.
 
-1. **API key de Twelve Data** — te la pediré con el formulario seguro. Tarda 1 min en sacarla en twelvedata.com (gratis, solo email).
-2. **Conectar Telegram** — abrir el conector y autorizar tu bot (o crear uno nuevo con @BotFather si no tienes).
-3. **Tu chat_id de Telegram** — para saber a quién mandar las alertas (te explico cómo sacarlo).
+### UI
 
-## Orden de construcción
+- Nueva ruta `/strategies` para CRUD de estrategias (lista, editar nombre/descripción/params, duplicar).
+- En `/backtest`: selector "¿Qué estrategia probar?" con multiselect para comparar 2-3 estrategias lado a lado.
+- En `/dashboard`: badge en cada setup mostrando qué estrategia lo generó.
 
-1. Activar Lovable Cloud + auth + tablas (setups, journal, config).
-2. Conectar Twelve Data y Telegram.
-3. Vista multi-timeframe con datos reales y EMAs.
-4. Detección de estructura + liquidez + FVG.
-5. Motor de señales con tus reglas y Setup Card.
-6. Calculadora de riesgo y panel de límites diarios.
-7. Envío a Telegram + cron de la ventana de Londres.
-8. Journal mínimo (oculto pero grabando).
+## 4. Estrategia 2: Continuación NY
 
-Si apruebas, arranco con el paso 1 y te pido las credenciales en los pasos 2 y 3.
+`src/lib/strategies/ny-continuation.ts`:
+
+- **Contexto H4**: tendencia clara (EMA20 vs EMA50, pendiente positiva/negativa).
+- **Setup H1**: precio hace pullback a EMA50 ± 0.5 ATR sin romper estructura.
+- **Entrada M15**: BOS a favor de la tendencia + FVG en zona de pullback.
+- **Killzone**: solo UTC 13-16 (solape Londres-NY + apertura NY pura).
+- **SL**: bajo último swing M15 + buffer ATR.
+- **TPs**: 1R / 2R / 3R (más conservador que E1 por ser continuación).
+
+## Sección técnica
+
+### Archivos nuevos
+- `public/mt5/XAUUSD_History_Export.mq5`
+- `src/lib/economic-calendar.ts`
+- `src/lib/strategies/index.ts`
+- `src/lib/strategies/smc-london.ts` (extraer de signal-engine actual)
+- `src/lib/strategies/ny-continuation.ts`
+- `src/lib/strategies.functions.ts` (CRUD)
+- `src/routes/_authenticated/strategies.tsx`
+- Migración Supabase para tabla `strategies` + seed
+
+### Archivos modificados
+- `src/lib/csv-parser.ts` — formato MT5 + clasificación TF
+- `src/lib/backtest.ts` y `.functions.ts` — recibir `engineKey`, filtros automáticos
+- `src/routes/_authenticated/backtest.tsx` — multi-CSV, selector estrategia, comparador
+- `src/lib/signal-engine.ts` — delegar al registro de strategies
+- `src/routes/_authenticated/dashboard.tsx` — mostrar estrategia origen + badge FOMC/NFP
+
+### Riesgos
+- El refactor de signal-engine puede romper alertas Telegram → mantener back-compat con engine_key default `smc_london`.
+- CSV grandes (M1 con 10 años ≈ 3M velas) pueden tumbar el navegador → procesar en chunks y avisar si excede 500k filas.
+
+## Lo que NO incluye este plan
+- Bots MQL5 ejecutables (esa fase viene después).
+- Backtest con datos tick-by-tick (solo OHLC por vela).
+- Walk-forward optimization cruzado entre estrategias.
