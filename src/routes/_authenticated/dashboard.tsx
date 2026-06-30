@@ -11,7 +11,7 @@ import { SetupCard } from "@/components/SetupCard";
 import { RiskPanel } from "@/components/RiskPanel";
 import { SessionClock } from "@/components/SessionClock";
 import { Button } from "@/components/ui/button";
-import { Settings, LogOut, RefreshCw } from "lucide-react";
+import { Settings, LogOut, RefreshCw, BarChart3 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -85,6 +85,7 @@ function Dashboard() {
             <Button variant="ghost" size="icon" onClick={() => pricesQ.refetch()} title="Actualizar">
               <RefreshCw className={`w-4 h-4 ${pricesQ.isFetching ? "animate-spin" : ""}`} />
             </Button>
+            <Link to="/backtest"><Button variant="ghost" size="icon" title="Backtest"><BarChart3 className="w-4 h-4" /></Button></Link>
             <Link to="/settings"><Button variant="ghost" size="icon"><Settings className="w-4 h-4" /></Button></Link>
             <Button variant="ghost" size="icon" onClick={logout} title="Salir"><LogOut className="w-4 h-4" /></Button>
           </div>
