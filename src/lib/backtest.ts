@@ -27,7 +27,50 @@ export type BacktestTrade = {
   outcome: "tp1" | "tp2" | "tp3" | "sl" | "be" | "timeout";
   hourUTC: number;
   weekday: number; // 0=Sun..6=Sat
+  features: number[]; // vector para el clasificador IA (orden en FEATURE_NAMES)
 };
+
+// Nombres de features en el mismo orden que buildFeatures().
+// Cualquier cambio aquí obliga a reentrenar los modelos guardados.
+export const FEATURE_NAMES = [
+  "h4Trend",
+  "h1Sweep",
+  "m15Fvg",
+  "m15Bos",
+  "killzone",
+  "atrScore",
+  "h1Align",
+  "totalScore",
+  "biasLong",
+  "hourSin",
+  "hourCos",
+  "weekdaySin",
+  "weekdayCos",
+] as const;
+
+export function buildFeatures(
+  breakdown: { h4Trend: number; h1Sweep: number; m15Fvg: number; m15Bos: number; killzone: number; atr: number; h1Alignment: number; total: number },
+  bias: "long" | "short",
+  hourUTC: number,
+  weekday: number,
+): number[] {
+  const twoPi = Math.PI * 2;
+  return [
+    breakdown.h4Trend / 20,
+    breakdown.h1Sweep / 25,
+    breakdown.m15Fvg / 20,
+    breakdown.m15Bos / 15,
+    breakdown.killzone / 12,
+    breakdown.atr / 10,
+    breakdown.h1Alignment / 5,
+    breakdown.total / 100,
+    bias === "long" ? 1 : 0,
+    Math.sin((twoPi * hourUTC) / 24),
+    Math.cos((twoPi * hourUTC) / 24),
+    Math.sin((twoPi * weekday) / 7),
+    Math.cos((twoPi * weekday) / 7),
+  ];
+}
 
 export type BacktestMetrics = {
   trades: number;
@@ -283,6 +326,8 @@ export function runBacktest(
 
     const sim = simulateTrade(m15, i + 1, signal.bias, entry, sl, tp1, tp2, tp3, maxHold);
     const d = new Date(entryBar.time * 1000);
+    const hourUTC = d.getUTCHours();
+    const weekday = d.getUTCDay();
     trades.push({
       openTime: entryBar.time,
       closeTime: sim.closeTime,
@@ -294,8 +339,9 @@ export function runBacktest(
       exit: sim.exit,
       rMultiple: sim.rMultiple,
       outcome: sim.outcome,
-      hourUTC: d.getUTCHours(),
-      weekday: d.getUTCDay(),
+      hourUTC,
+      weekday,
+      features: buildFeatures(signal.scoreBreakdown, signal.bias, hourUTC, weekday),
     });
     // Advance i to past the trade close
     const exitIdx = m15.findIndex((c) => c.time >= sim.closeTime);
