@@ -688,6 +688,164 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
 
 const WEEKDAYS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
+function AiPanel({ result }: { result: BacktestResult }) {
+  const engineKey = result.engineKey;
+  const trainer = useAiTrainer();
+  const [model, setModel] = useState<TrainedModel | null>(() => loadModel(engineKey));
+  const [error, setError] = useState<string | null>(null);
+  const [training, setTraining] = useState(false);
+
+  const startTraining = async () => {
+    setError(null);
+    setTraining(true);
+    try {
+      const features = result.trades.map((t) => t.features);
+      const labels = result.trades.map((t) => (t.rMultiple > 0 ? 1 : 0));
+      const rMultiples = result.trades.map((t) => t.rMultiple);
+      const m = await trainer.train({ features, labels, rMultiples, epochs: 250 });
+      setModel(m);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error entrenando");
+    } finally {
+      setTraining(false);
+    }
+  };
+
+  const persist = () => {
+    if (!model) return;
+    saveModel(engineKey, model);
+    setModel({ ...model });
+  };
+  const remove = () => { deleteModel(engineKey); setModel(null); };
+
+  const wins = result.trades.filter((t) => t.rMultiple > 0).length;
+  const baselineWr = result.trades.length ? wins / result.trades.length : 0;
+  const positiveClassRatio = baselineWr;
+  const hasSaved = typeof window !== "undefined" && !!localStorage.getItem("tc.ai.model." + engineKey);
+
+  return (
+    <section className="rounded-lg border border-primary/40 bg-card p-5 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Brain className="w-5 h-5 text-primary" />
+          <h3 className="font-semibold">IA · Filtro sobre {STRATEGIES[engineKey].shortName}</h3>
+          <Badge variant="outline" className="text-xs">
+            Regresión logística · {result.trades[0]?.features.length ?? 0} features
+          </Badge>
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" onClick={startTraining} disabled={training}>
+            {training ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Brain className="w-3.5 h-3.5 mr-1" />}
+            {training ? "Entrenando..." : model ? "Reentrenar" : "Entrenar modelo"}
+          </Button>
+          {model && (
+            <>
+              <Button size="sm" variant="secondary" onClick={persist}>
+                <Save className="w-3.5 h-3.5 mr-1" /> Guardar modelo
+              </Button>
+              {hasSaved && (
+                <Button size="sm" variant="ghost" onClick={remove}>
+                  <Trash2 className="w-3.5 h-3.5 mr-1" /> Borrar
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Entrena un clasificador local con los <span className="font-mono text-foreground">{result.trades.length}</span> trades
+        del backtest (70% entrenamiento, 30% validación cronológica). Corre en un Web Worker aparte, no bloquea la UI.
+        Baseline WR: <span className="font-mono text-foreground">{(positiveClassRatio * 100).toFixed(1)}%</span>.
+      </p>
+
+      {trainer.progress && (
+        <div className="text-xs text-muted-foreground flex items-center gap-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Epoch <span className="font-mono">{trainer.progress.epoch}/{trainer.progress.total}</span> ·
+          loss <span className="font-mono">{trainer.progress.loss.toFixed(4)}</span>
+        </div>
+      )}
+      {error && <div className="text-xs text-destructive">{error}</div>}
+
+      {model && (
+        <>
+          <div className="grid md:grid-cols-4 gap-3 text-xs">
+            <Metric label="AUC validación" value={model.metrics.valAuc.toFixed(3)}
+              hint={model.metrics.valAuc >= 0.6 ? "modelo útil" : model.metrics.valAuc >= 0.55 ? "señal leve" : "no aporta"} />
+            <Metric label="Log-loss val" value={model.metrics.valLogLoss.toFixed(3)} />
+            <Metric label="Train / Val" value={`${model.metrics.trainSize} / ${model.metrics.valSize}`} />
+            <Metric label="Umbral sugerido" value={`P ≥ ${(model.metrics.threshold * 100).toFixed(0)}%`} />
+          </div>
+
+          <div className="rounded-md border border-border overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-background/50 text-muted-foreground uppercase">
+                <tr>
+                  <th className="text-left px-3 py-2">Escenario en validación</th>
+                  <th className="text-right px-3 py-2">Trades</th>
+                  <th className="text-right px-3 py-2">Winrate</th>
+                  <th className="text-right px-3 py-2">Expectancy</th>
+                  <th className="text-right px-3 py-2">Total R</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-t border-border">
+                  <td className="px-3 py-2">Sin IA (baseline)</td>
+                  <td className="text-right px-3 py-2 font-mono">{model.metrics.valSize}</td>
+                  <td className="text-right px-3 py-2 font-mono">{(model.metrics.baselineWinrate * 100).toFixed(1)}%</td>
+                  <td className="text-right px-3 py-2 font-mono">{model.metrics.expectancyBase.toFixed(2)}R</td>
+                  <td className={`text-right px-3 py-2 font-mono ${model.metrics.totalRBase >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {model.metrics.totalRBase >= 0 ? "+" : ""}{model.metrics.totalRBase.toFixed(2)}R
+                  </td>
+                </tr>
+                <tr className="border-t border-border bg-emerald-500/5">
+                  <td className="px-3 py-2">
+                    Con IA (P ≥ {(model.metrics.threshold * 100).toFixed(0)}%)
+                    <span className="ml-2 text-muted-foreground">· conserva {(model.metrics.keptRatio * 100).toFixed(0)}% de setups</span>
+                  </td>
+                  <td className="text-right px-3 py-2 font-mono">{Math.round(model.metrics.valSize * model.metrics.keptRatio)}</td>
+                  <td className="text-right px-3 py-2 font-mono">{(model.metrics.winrateAtThreshold * 100).toFixed(1)}%</td>
+                  <td className="text-right px-3 py-2 font-mono">{model.metrics.expectancyFiltered.toFixed(2)}R</td>
+                  <td className={`text-right px-3 py-2 font-mono ${model.metrics.totalRFiltered >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {model.metrics.totalRFiltered >= 0 ? "+" : ""}{model.metrics.totalRFiltered.toFixed(2)}R
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="text-xs text-muted-foreground space-y-1">
+            <p>
+              <span className="text-foreground font-medium">Delta:</span>{" "}
+              Winrate <span className="font-mono">
+                {((model.metrics.winrateAtThreshold - model.metrics.baselineWinrate) * 100).toFixed(1)} pp
+              </span> · Expectancy{" "}
+              <span className="font-mono">
+                {(model.metrics.expectancyFiltered - model.metrics.expectancyBase).toFixed(2)}R
+              </span>
+            </p>
+            <p>
+              Modelo entrenado {new Date(model.trainedAt).toLocaleString()}. Guardar lo persiste en este navegador para
+              usarlo como filtro en el dashboard/Telegram (próximo paso: cablearlo al motor en vivo y exportarlo a ONNX para MT5).
+            </p>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function Metric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-md border border-border bg-background/40 px-3 py-2">
+      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className="font-mono text-sm">{value}</div>
+      {hint && <div className="text-[10px] text-muted-foreground mt-0.5">{hint}</div>}
+    </div>
+  );
+}
+
 function fmtDate(unix: number) {
   if (!unix) return "—";
   return new Date(unix * 1000).toISOString().slice(0, 10);
