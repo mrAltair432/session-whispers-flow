@@ -13,9 +13,10 @@ import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
 import { useBacktestWorker } from "@/lib/use-backtest-worker";
+import { useOptimizerPool } from "@/lib/use-optimizer-pool";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download } from "lucide-react";
+import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
 } from "recharts";
@@ -28,11 +29,22 @@ export const Route = createFileRoute("/_authenticated/backtest")({
 type CustomData = { tf: TfKey; candles: Candle[]; fileName: string };
 const REQUIRED_BACKTEST_TFS: TfKey[] = ["H4", "H1", "M15"];
 
+type SavedConfig = { minScore: number; excludeHours: number[]; savedAt: number };
+const CONFIG_KEY = "tc.backtest.appliedConfig.v1";
+function loadSavedConfigs(): Partial<Record<EngineKey, SavedConfig>> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}"); } catch { return {}; }
+}
+function persistSavedConfigs(cfg: Partial<Record<EngineKey, SavedConfig>>) {
+  try { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
+}
+
 function BacktestPage() {
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
   const allStrategies = listStrategies();
   const worker = useBacktestWorker();
+  const pool = useOptimizerPool();
 
   const [minScoreOverride, setMinScoreOverride] = useState<number | "">("");
   const [enginesSelected, setEnginesSelected] = useState<EngineKey[]>(allStrategies.map((s) => s.key));
@@ -44,6 +56,27 @@ function BacktestPage() {
     {} as Record<TfKey, CustomData | undefined>,
   );
   const [parseErrors, setParseErrors] = useState<string[]>([]);
+  const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
+
+  // Al cambiar de estrategia a optimizar, precargar su config guardada (si existe)
+  // en los controles superiores para que el próximo backtest la use.
+  const applyConfigToUi = (cfg: SavedConfig) => {
+    setMinScoreOverride(cfg.minScore);
+    setExcludeHours(cfg.excludeHours);
+  };
+  const saveAndApply = (engineKey: EngineKey, minScore: number, excludeHours: number[]) => {
+    const next: SavedConfig = { minScore, excludeHours, savedAt: Date.now() };
+    const merged = { ...savedConfigs, [engineKey]: next };
+    setSavedConfigs(merged);
+    persistSavedConfigs(merged);
+    applyConfigToUi(next);
+  };
+  const clearSavedConfig = (engineKey: EngineKey) => {
+    const merged = { ...savedConfigs };
+    delete merged[engineKey];
+    setSavedConfigs(merged);
+    persistSavedConfigs(merged);
+  };
 
   const customH4 = datasets.H4?.candles;
   const customH1 = datasets.H1?.candles;
@@ -108,11 +141,9 @@ function BacktestPage() {
             engineKey: optimizerEngine,
           };
         }
-        const resp = await worker.run<{ rows: OptimizerPayload["rows"]; best: OptimizerPayload["best"] }>({
-          type: "optimize",
-          h4: customH4,
-          h1: customH1,
-          m15: customM15,
+        // Pool de workers: paraleliza cada combo (minScore × variante) en varios núcleos.
+        const resp = await pool.optimize({
+          h4: customH4, h1: customH1, m15: customM15,
           engineKey: optimizerEngine,
           excludeWeekdays,
           autoTimeFilters,
