@@ -467,6 +467,7 @@ function BacktestPage() {
                     <th className="text-right py-2">Max DD</th>
                     <th className="text-right py-2">Sharpe</th>
                     <th className="text-right py-2">Score</th>
+                    <th className="text-right py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
