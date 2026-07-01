@@ -13,9 +13,10 @@ import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
 import { useBacktestWorker } from "@/lib/use-backtest-worker";
+import { useOptimizerPool } from "@/lib/use-optimizer-pool";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download } from "lucide-react";
+import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
 } from "recharts";
@@ -28,11 +29,22 @@ export const Route = createFileRoute("/_authenticated/backtest")({
 type CustomData = { tf: TfKey; candles: Candle[]; fileName: string };
 const REQUIRED_BACKTEST_TFS: TfKey[] = ["H4", "H1", "M15"];
 
+type SavedConfig = { minScore: number; excludeHours: number[]; savedAt: number };
+const CONFIG_KEY = "tc.backtest.appliedConfig.v1";
+function loadSavedConfigs(): Partial<Record<EngineKey, SavedConfig>> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}"); } catch { return {}; }
+}
+function persistSavedConfigs(cfg: Partial<Record<EngineKey, SavedConfig>>) {
+  try { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
+}
+
 function BacktestPage() {
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
   const allStrategies = listStrategies();
   const worker = useBacktestWorker();
+  const pool = useOptimizerPool();
 
   const [minScoreOverride, setMinScoreOverride] = useState<number | "">("");
   const [enginesSelected, setEnginesSelected] = useState<EngineKey[]>(allStrategies.map((s) => s.key));
@@ -44,6 +56,27 @@ function BacktestPage() {
     {} as Record<TfKey, CustomData | undefined>,
   );
   const [parseErrors, setParseErrors] = useState<string[]>([]);
+  const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
+
+  // Al cambiar de estrategia a optimizar, precargar su config guardada (si existe)
+  // en los controles superiores para que el próximo backtest la use.
+  const applyConfigToUi = (cfg: SavedConfig) => {
+    setMinScoreOverride(cfg.minScore);
+    setExcludeHours(cfg.excludeHours);
+  };
+  const saveAndApply = (engineKey: EngineKey, minScore: number, excludeHours: number[]) => {
+    const next: SavedConfig = { minScore, excludeHours, savedAt: Date.now() };
+    const merged = { ...savedConfigs, [engineKey]: next };
+    setSavedConfigs(merged);
+    persistSavedConfigs(merged);
+    applyConfigToUi(next);
+  };
+  const clearSavedConfig = (engineKey: EngineKey) => {
+    const merged = { ...savedConfigs };
+    delete merged[engineKey];
+    setSavedConfigs(merged);
+    persistSavedConfigs(merged);
+  };
 
   const customH4 = datasets.H4?.candles;
   const customH1 = datasets.H1?.candles;
@@ -108,11 +141,9 @@ function BacktestPage() {
             engineKey: optimizerEngine,
           };
         }
-        const resp = await worker.run<{ rows: OptimizerPayload["rows"]; best: OptimizerPayload["best"] }>({
-          type: "optimize",
-          h4: customH4,
-          h1: customH1,
-          m15: customM15,
+        // Pool de workers: paraleliza cada combo (minScore × variante) en varios núcleos.
+        const resp = await pool.optimize({
+          h4: customH4, h1: customH1, m15: customM15,
           engineKey: optimizerEngine,
           excludeWeekdays,
           autoTimeFilters,
@@ -375,6 +406,21 @@ function BacktestPage() {
               <h3 className="font-semibold">
                 Optimizador · {STRATEGIES[o.data.engineKey].shortName}
               </h3>
+              {o.data.best && (
+                <div className="ml-auto flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => saveAndApply(o.data!.engineKey, o.data!.best!.minScore, o.data!.best!.excludeHours)}
+                  >
+                    <Save className="w-3.5 h-3.5 mr-1" /> Aplicar como config base
+                  </Button>
+                  {savedConfigs[o.data.engineKey] && (
+                    <Button size="sm" variant="ghost" onClick={() => clearSavedConfig(o.data!.engineKey)}>
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Restaurar default
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
             {o.data.best && (
               <div className="text-xs text-muted-foreground">
@@ -382,6 +428,29 @@ function BacktestPage() {
                 {o.data.best.excludeHours.length > 0 && (
                   <> · excluir horas <span className="text-foreground font-mono">[{o.data.best.excludeHours.join(",")}]</span></>
                 )}
+                <span className="ml-2 text-muted-foreground">
+                  Guardar aplica <em>minScore</em> y <em>excluir horas</em> a los controles de arriba y persiste en este navegador.
+                  Vuelve a correr el backtest para verificar, y re-optimiza para iterar sobre esa base.
+                </span>
+              </div>
+            )}
+            {Object.keys(savedConfigs).length > 0 && (
+              <div className="text-xs flex flex-wrap gap-2 pt-1 border-t border-border">
+                <span className="text-muted-foreground">Configs guardadas:</span>
+                {(Object.keys(savedConfigs) as EngineKey[]).map((k) => {
+                  const c = savedConfigs[k]!;
+                  return (
+                    <button
+                      key={k}
+                      onClick={() => { setOptimizerEngine(k); applyConfigToUi(c); }}
+                      className="font-mono px-2 py-0.5 rounded border border-border hover:bg-background/50"
+                      title="Cargar en los controles"
+                    >
+                      {STRATEGIES[k].shortName}: minScore={c.minScore}
+                      {c.excludeHours.length ? ` · excl [${c.excludeHours.join(",")}]` : ""}
+                    </button>
+                  );
+                })}
               </div>
             )}
             <div className="overflow-x-auto">
@@ -398,6 +467,7 @@ function BacktestPage() {
                     <th className="text-right py-2">Max DD</th>
                     <th className="text-right py-2">Sharpe</th>
                     <th className="text-right py-2">Score</th>
+                    <th className="text-right py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -415,15 +485,38 @@ function BacktestPage() {
                       <td className="text-right py-2 font-mono text-red-400">-{r.maxDrawdownR.toFixed(2)}</td>
                       <td className="text-right py-2 font-mono">{r.sharpe.toFixed(2)}</td>
                       <td className="text-right py-2 font-mono">{isFinite(r.score) ? r.score.toFixed(2) : "—"}</td>
+                      <td className="text-right py-2">
+                        <button
+                          onClick={() => saveAndApply(o.data!.engineKey, r.minScore, r.excludeHours)}
+                          className="text-xs px-2 py-0.5 rounded border border-border hover:bg-background/50"
+                          title="Aplicar esta fila como config base"
+                        >
+                          Aplicar
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {o.isPending && pool.progress && (
+              <div className="text-xs text-muted-foreground">
+                Pool de {pool.progress.workers} workers · {pool.progress.done}/{pool.progress.total} combos
+              </div>
+            )}
           </section>
         )}
         {o.data?.error && (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{o.data.error}</div>
+        )}
+
+        {o.isPending && (
+          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            {pool.progress
+              ? <>Optimizando en paralelo · <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos · <span className="font-mono">{pool.progress.workers} workers</span></>
+              : "Optimizando..."}
+          </div>
         )}
 
         {!data && !m.isPending && (
