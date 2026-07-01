@@ -14,9 +14,11 @@ import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
 import { useBacktestWorker } from "@/lib/use-backtest-worker";
 import { useOptimizerPool } from "@/lib/use-optimizer-pool";
+import { useAiTrainer, loadModel, saveModel, deleteModel } from "@/lib/ai/use-trainer";
+import type { TrainedModel } from "@/lib/ai/logistic";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw } from "lucide-react";
+import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
 } from "recharts";
@@ -595,6 +597,10 @@ function BacktestPage() {
             </div>
 
             {data.results.map((r) => <ProfileDetail key={r.engineKey} result={r} />)}
+
+            {data.results
+              .filter((r) => r.trades.length >= 40 && r.trades[0].features?.length)
+              .map((r) => <AiPanel key={"ai-" + r.engineKey} result={r} />)}
           </>
         )}
       </main>
