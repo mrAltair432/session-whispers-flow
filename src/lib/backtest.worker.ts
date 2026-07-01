@@ -27,7 +27,31 @@ type OptimizeJob = {
   autoTimeFilters: boolean;
 };
 
-type Job = BacktestJob | OptimizeJob;
+type BaselineJob = {
+  id: number;
+  type: "optimize-baseline";
+  h4: Candle[];
+  h1: Candle[];
+  m15: Candle[];
+  engineKey: EngineKey;
+  excludeWeekdays: number[];
+  autoTimeFilters: boolean;
+};
+
+type OneComboJob = {
+  id: number;
+  type: "optimize-one";
+  h4: Candle[];
+  h1: Candle[];
+  m15: Candle[];
+  engineKey: EngineKey;
+  minScore: number;
+  excludeHours: number[];
+  excludeWeekdays: number[];
+  autoTimeFilters: boolean;
+};
+
+type Job = BacktestJob | OptimizeJob | BaselineJob | OneComboJob;
 
 self.onmessage = (e: MessageEvent<Job>) => {
   const job = e.data;
@@ -112,6 +136,43 @@ self.onmessage = (e: MessageEvent<Job>) => {
       rows.sort((a, b) => b.score - a.score);
       (self as unknown as Worker).postMessage({
         id: job.id, done: true, rows, best: rows[0] ?? null, engineKey: job.engineKey,
+      });
+    } else if (job.type === "optimize-baseline") {
+      const baseline = runBacktest(job.h4, job.h1, job.m15, {
+        engineKey: job.engineKey,
+        excludeWeekdays: job.excludeWeekdays,
+        autoTimeFilters: job.autoTimeFilters,
+      });
+      const worstHours = baseline.metrics.byHour
+        .filter((h) => h.trades >= 2 && h.totalR < 0)
+        .sort((a, b) => a.totalR - b.totalR)
+        .slice(0, 3)
+        .map((h) => h.hour);
+      (self as unknown as Worker).postMessage({ id: job.id, done: true, worstHours });
+    } else if (job.type === "optimize-one") {
+      const r = runBacktest(job.h4, job.h1, job.m15, {
+        engineKey: job.engineKey,
+        params: { minScore: job.minScore },
+        excludeHours: job.excludeHours,
+        excludeWeekdays: job.excludeWeekdays,
+        autoTimeFilters: job.autoTimeFilters,
+      });
+      const mm = r.metrics;
+      const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);
+      const composite = mm.trades >= 10 ? mm.expectancy * sampleWeight - 0.1 * mm.maxDrawdownR : -Infinity;
+      (self as unknown as Worker).postMessage({
+        id: job.id, done: true, row: {
+          minScore: job.minScore,
+          excludeHours: job.excludeHours,
+          trades: mm.trades,
+          winrate: mm.winrate,
+          totalR: mm.totalR,
+          expectancy: mm.expectancy,
+          profitFactor: isFinite(mm.profitFactor) ? mm.profitFactor : 99,
+          maxDrawdownR: mm.maxDrawdownR,
+          sharpe: mm.sharpe,
+          score: composite,
+        },
       });
     }
   } catch (err) {
