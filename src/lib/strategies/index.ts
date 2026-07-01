@@ -1,8 +1,9 @@
 import type { Candle } from "../analysis";
 import { generateSignal as smcGenerate, type Signal } from "../signal-engine";
 import { evaluateNyContinuation } from "./ny-continuation";
+import { evaluateFiboScalping } from "./fibo-scalping";
 
-export type EngineKey = "smc_london" | "ny_continuation";
+export type EngineKey = "smc_london" | "ny_continuation" | "fibo_scalping";
 
 export type StrategyParams = {
   minScore?: number;
@@ -41,6 +42,17 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     killzoneHoursUTC: [12, 13, 14, 15],
     evaluate: (h4, h1, m15, params) =>
       evaluateNyContinuation(h4, h1, m15, (params.minScore as number) ?? 65),
+  },
+  fibo_scalping: {
+    key: "fibo_scalping",
+    name: "Fibo Scalping Oro (Londres)",
+    shortName: "E3 · Fibo Scalping",
+    description:
+      "Sesgo H4 + swing H1 + retroceso 0.5-0.786 con confirmación M15. Solo Londres (UTC 07-10), sin domingos y viernes hasta mediodía. Base para bot MT5 con grid limitado.",
+    defaultParams: { minScore: 65 },
+    killzoneHoursUTC: [7, 8, 9, 10],
+    evaluate: (h4, h1, m15, params) =>
+      evaluateFiboScalping(h4, h1, m15, (params.minScore as number) ?? 65),
   },
 };
 
