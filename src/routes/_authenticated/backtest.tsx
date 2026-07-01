@@ -510,6 +510,15 @@ function BacktestPage() {
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{o.data.error}</div>
         )}
 
+        {o.isPending && (
+          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            {pool.progress
+              ? <>Optimizando en paralelo · <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos · <span className="font-mono">{pool.progress.workers} workers</span></>
+              : "Optimizando..."}
+          </div>
+        )}
+
         {!data && !m.isPending && (
           <div className="rounded-lg border border-dashed border-border p-12 text-center">
             <h2 className="text-lg font-semibold mb-2">Compara estrategias lado a lado</h2>
