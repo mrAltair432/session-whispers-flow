@@ -406,6 +406,21 @@ function BacktestPage() {
               <h3 className="font-semibold">
                 Optimizador · {STRATEGIES[o.data.engineKey].shortName}
               </h3>
+              {o.data.best && (
+                <div className="ml-auto flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => saveAndApply(o.data!.engineKey, o.data!.best!.minScore, o.data!.best!.excludeHours)}
+                  >
+                    <Save className="w-3.5 h-3.5 mr-1" /> Aplicar como config base
+                  </Button>
+                  {savedConfigs[o.data.engineKey] && (
+                    <Button size="sm" variant="ghost" onClick={() => clearSavedConfig(o.data!.engineKey)}>
+                      <RotateCcw className="w-3.5 h-3.5 mr-1" /> Restaurar default
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
             {o.data.best && (
               <div className="text-xs text-muted-foreground">
@@ -413,6 +428,29 @@ function BacktestPage() {
                 {o.data.best.excludeHours.length > 0 && (
                   <> · excluir horas <span className="text-foreground font-mono">[{o.data.best.excludeHours.join(",")}]</span></>
                 )}
+                <span className="ml-2 text-muted-foreground">
+                  Guardar aplica <em>minScore</em> y <em>excluir horas</em> a los controles de arriba y persiste en este navegador.
+                  Vuelve a correr el backtest para verificar, y re-optimiza para iterar sobre esa base.
+                </span>
+              </div>
+            )}
+            {Object.keys(savedConfigs).length > 0 && (
+              <div className="text-xs flex flex-wrap gap-2 pt-1 border-t border-border">
+                <span className="text-muted-foreground">Configs guardadas:</span>
+                {(Object.keys(savedConfigs) as EngineKey[]).map((k) => {
+                  const c = savedConfigs[k]!;
+                  return (
+                    <button
+                      key={k}
+                      onClick={() => { setOptimizerEngine(k); applyConfigToUi(c); }}
+                      className="font-mono px-2 py-0.5 rounded border border-border hover:bg-background/50"
+                      title="Cargar en los controles"
+                    >
+                      {STRATEGIES[k].shortName}: minScore={c.minScore}
+                      {c.excludeHours.length ? ` · excl [${c.excludeHours.join(",")}]` : ""}
+                    </button>
+                  );
+                })}
               </div>
             )}
             <div className="overflow-x-auto">
@@ -446,11 +484,25 @@ function BacktestPage() {
                       <td className="text-right py-2 font-mono text-red-400">-{r.maxDrawdownR.toFixed(2)}</td>
                       <td className="text-right py-2 font-mono">{r.sharpe.toFixed(2)}</td>
                       <td className="text-right py-2 font-mono">{isFinite(r.score) ? r.score.toFixed(2) : "—"}</td>
+                      <td className="text-right py-2">
+                        <button
+                          onClick={() => saveAndApply(o.data!.engineKey, r.minScore, r.excludeHours)}
+                          className="text-xs px-2 py-0.5 rounded border border-border hover:bg-background/50"
+                          title="Aplicar esta fila como config base"
+                        >
+                          Aplicar
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {o.isPending && pool.progress && (
+              <div className="text-xs text-muted-foreground">
+                Pool de {pool.progress.workers} workers · {pool.progress.done}/{pool.progress.total} combos
+              </div>
+            )}
           </section>
         )}
         {o.data?.error && (
