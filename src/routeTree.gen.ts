@@ -16,6 +16,7 @@ import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedBacktestRouteImport } from './routes/_authenticated/backtest'
 import { Route as ApiPublicMt5ExportRouteImport } from './routes/api/public/mt5-export'
+import { Route as ApiPublicHooksEvaluateSignalsRouteImport } from './routes/api/public/hooks/evaluate-signals'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -51,6 +52,12 @@ const ApiPublicMt5ExportRoute = ApiPublicMt5ExportRouteImport.update({
   path: '/api/public/mt5-export',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicHooksEvaluateSignalsRoute =
+  ApiPublicHooksEvaluateSignalsRouteImport.update({
+    id: '/api/public/hooks/evaluate-signals',
+    path: '/api/public/hooks/evaluate-signals',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
+  '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -67,6 +75,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
+  '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -77,6 +86,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
+  '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -87,6 +97,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/settings'
     | '/api/public/mt5-export'
+    | '/api/public/hooks/evaluate-signals'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -95,6 +106,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/settings'
     | '/api/public/mt5-export'
+    | '/api/public/hooks/evaluate-signals'
   id:
     | '__root__'
     | '/'
@@ -104,6 +116,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/settings'
     | '/api/public/mt5-export'
+    | '/api/public/hooks/evaluate-signals'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -111,6 +124,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiPublicMt5ExportRoute: typeof ApiPublicMt5ExportRoute
+  ApiPublicHooksEvaluateSignalsRoute: typeof ApiPublicHooksEvaluateSignalsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -164,6 +178,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicMt5ExportRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/hooks/evaluate-signals': {
+      id: '/api/public/hooks/evaluate-signals'
+      path: '/api/public/hooks/evaluate-signals'
+      fullPath: '/api/public/hooks/evaluate-signals'
+      preLoaderRoute: typeof ApiPublicHooksEvaluateSignalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -187,17 +208,8 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiPublicMt5ExportRoute: ApiPublicMt5ExportRoute,
+  ApiPublicHooksEvaluateSignalsRoute: ApiPublicHooksEvaluateSignalsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

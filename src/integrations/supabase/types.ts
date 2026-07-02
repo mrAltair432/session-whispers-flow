@@ -157,6 +157,63 @@ export type Database = {
         }
         Relationships: []
       }
+      signal_events: {
+        Row: {
+          bias: string
+          bucket_hour: string
+          confidence: string
+          created_at: string
+          engine: string
+          entry: number
+          id: string
+          reasoning: Json
+          score: number
+          stop_loss: number
+          telegram_error: string | null
+          telegram_sent: boolean
+          tp1: number
+          tp2: number
+          tp3: number | null
+          user_id: string
+        }
+        Insert: {
+          bias: string
+          bucket_hour: string
+          confidence: string
+          created_at?: string
+          engine: string
+          entry: number
+          id?: string
+          reasoning?: Json
+          score: number
+          stop_loss: number
+          telegram_error?: string | null
+          telegram_sent?: boolean
+          tp1: number
+          tp2: number
+          tp3?: number | null
+          user_id: string
+        }
+        Update: {
+          bias?: string
+          bucket_hour?: string
+          confidence?: string
+          created_at?: string
+          engine?: string
+          entry?: number
+          id?: string
+          reasoning?: Json
+          score?: number
+          stop_loss?: number
+          telegram_error?: string | null
+          telegram_sent?: boolean
+          tp1?: number
+          tp2?: number
+          tp3?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_config: {
         Row: {
           auto_alert_high_confidence: boolean
