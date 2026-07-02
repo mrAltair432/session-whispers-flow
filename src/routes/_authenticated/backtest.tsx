@@ -299,6 +299,21 @@ function BacktestPage() {
             >
               <Download className="w-3 h-3" /> XAUUSD_History_Export.mq5
             </a>
+            <div className="pt-2 border-t border-border mt-2">
+              <div className="text-xs font-medium mb-1">EA Fibo Scalping (E3) para MT5</div>
+              <p className="text-xs text-muted-foreground mb-2">
+                Expert Advisor con las mismas reglas que E3 (sin IA). Cópialo en{" "}
+                <code>MQL5/Experts/</code>, compila (F7) y arrástralo sobre un gráfico
+                M15 de XAUUSD. Prueba en cuenta demo antes de real.
+              </p>
+              <a
+                href="/api/public/mt5-fibo-ea"
+                download
+                className="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded bg-primary text-primary-foreground hover:opacity-90"
+              >
+                <Download className="w-3 h-3" /> TradingCompass_FiboScalping.mq5
+              </a>
+            </div>
           </div>
           <div className="rounded-lg border border-border bg-card p-4 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium">
