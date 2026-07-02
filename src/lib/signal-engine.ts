@@ -32,6 +32,10 @@ export type Signal = {
     m15Confirmation: string;
     notes: string[];
   };
+  // Opcional: vector de features "rico" precomputado por la estrategia.
+  // Si está presente, el backtest lo usa en vez del buildFeatures genérico.
+  features?: number[];
+  featureNames?: readonly string[];
 } | null;
 
 export type EngineOptions = {
