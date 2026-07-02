@@ -1,5 +1,6 @@
 import { ema, atr, detectSwings, detectBOS, type Candle } from "../analysis";
 import type { Signal } from "../signal-engine";
+import { buildFiboFeatures } from "../features/fibo-features";
 
 // Estrategia 3: Fibo Scalping (Londres)
 // -----------------------------------------------
@@ -132,6 +133,15 @@ export function evaluateFiboScalping(
 
   const confidence: "high" | "medium" = breakdown.total >= 82 ? "high" : "medium";
 
+  // Features ricos (art. 764109/21890/20160): opcional para el clasificador IA.
+  // No afecta la señal en vivo; solo se anexa al payload para el backtest/IA.
+  const rich = buildFiboFeatures({
+    h4, h1, m15, bias,
+    lvl500, lvl618, lvl786,
+    highPrice, lowPrice,
+    breakdown,
+  });
+
   return {
     bias,
     confidence,
@@ -142,6 +152,8 @@ export function evaluateFiboScalping(
     tp1: round(tp1),
     tp2: round(tp2),
     tp3: round(tp3),
+    features: rich.features,
+    featureNames: rich.names,
     reasoning: {
       h4Trend: `H4 ${bias === "long" ? "alcista" : "bajista"} (EMA20 vs EMA50)`,
       h1Liquidity: `Swing H1 ${lowPrice.toFixed(2)} → ${highPrice.toFixed(2)} (rango ${range.toFixed(2)})`,
