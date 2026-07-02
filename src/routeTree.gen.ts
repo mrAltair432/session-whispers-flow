@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedBacktestRouteImport } from './routes/_authenticated/backtest'
+import { Route as ApiPublicMt5FiboEaRouteImport } from './routes/api/public/mt5-fibo-ea'
 import { Route as ApiPublicMt5ExportRouteImport } from './routes/api/public/mt5-export'
 import { Route as ApiPublicHooksEvaluateSignalsRouteImport } from './routes/api/public/hooks/evaluate-signals'
 
@@ -47,6 +48,11 @@ const AuthenticatedBacktestRoute = AuthenticatedBacktestRouteImport.update({
   path: '/backtest',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const ApiPublicMt5FiboEaRoute = ApiPublicMt5FiboEaRouteImport.update({
+  id: '/api/public/mt5-fibo-ea',
+  path: '/api/public/mt5-fibo-ea',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicMt5ExportRoute = ApiPublicMt5ExportRouteImport.update({
   id: '/api/public/mt5-export',
   path: '/api/public/mt5-export',
@@ -66,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
+  '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
   '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRoutesByTo {
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
+  '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
   '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRoutesById {
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
+  '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
   '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRouteTypes {
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/settings'
     | '/api/public/mt5-export'
+    | '/api/public/mt5-fibo-ea'
     | '/api/public/hooks/evaluate-signals'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/settings'
     | '/api/public/mt5-export'
+    | '/api/public/mt5-fibo-ea'
     | '/api/public/hooks/evaluate-signals'
   id:
     | '__root__'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/settings'
     | '/api/public/mt5-export'
+    | '/api/public/mt5-fibo-ea'
     | '/api/public/hooks/evaluate-signals'
   fileRoutesById: FileRoutesById
 }
@@ -124,6 +136,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiPublicMt5ExportRoute: typeof ApiPublicMt5ExportRoute
+  ApiPublicMt5FiboEaRoute: typeof ApiPublicMt5FiboEaRoute
   ApiPublicHooksEvaluateSignalsRoute: typeof ApiPublicHooksEvaluateSignalsRoute
 }
 
@@ -171,6 +184,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedBacktestRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/public/mt5-fibo-ea': {
+      id: '/api/public/mt5-fibo-ea'
+      path: '/api/public/mt5-fibo-ea'
+      fullPath: '/api/public/mt5-fibo-ea'
+      preLoaderRoute: typeof ApiPublicMt5FiboEaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/mt5-export': {
       id: '/api/public/mt5-export'
       path: '/api/public/mt5-export'
@@ -208,18 +228,9 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiPublicMt5ExportRoute: ApiPublicMt5ExportRoute,
+  ApiPublicMt5FiboEaRoute: ApiPublicMt5FiboEaRoute,
   ApiPublicHooksEvaluateSignalsRoute: ApiPublicHooksEvaluateSignalsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
