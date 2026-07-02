@@ -14,8 +14,7 @@ import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
 import { useBacktestWorker } from "@/lib/use-backtest-worker";
 import { useOptimizerPool } from "@/lib/use-optimizer-pool";
-import { useAiTrainer, loadModel, saveModel, deleteModel } from "@/lib/ai/use-trainer";
-import type { TrainedModel } from "@/lib/ai/logistic";
+import { useAiTrainer, loadModel, saveModel, deleteModel, isMlpModel, type AnyModel } from "@/lib/ai/use-trainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2 } from "lucide-react";
@@ -691,9 +690,12 @@ const WEEKDAYS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 function AiPanel({ result }: { result: BacktestResult }) {
   const engineKey = result.engineKey;
   const trainer = useAiTrainer();
-  const [model, setModel] = useState<TrainedModel | null>(() => loadModel(engineKey));
+  const [model, setModel] = useState<AnyModel | null>(() => loadModel(engineKey));
   const [error, setError] = useState<string | null>(null);
   const [training, setTraining] = useState(false);
+  // Fibo Scalping trae features ricos → default MLP. Los demás motores → logistic.
+  const defaultType: "logistic" | "mlp" = engineKey === "fibo_scalping" ? "mlp" : "logistic";
+  const [modelType, setModelType] = useState<"logistic" | "mlp">(defaultType);
 
   const startTraining = async () => {
     setError(null);
@@ -702,7 +704,13 @@ function AiPanel({ result }: { result: BacktestResult }) {
       const features = result.trades.map((t) => t.features);
       const labels = result.trades.map((t) => (t.rMultiple > 0 ? 1 : 0));
       const rMultiples = result.trades.map((t) => t.rMultiple);
-      const m = await trainer.train({ features, labels, rMultiples, epochs: 250 });
+      const featureNames = (result.trades[0] as { featureNames?: readonly string[] } | undefined)?.featureNames;
+      const m = await trainer.train({
+        features, labels, rMultiples,
+        epochs: modelType === "mlp" ? 300 : 250,
+        modelType,
+        featureNames,
+      });
       setModel(m);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error entrenando");
@@ -722,6 +730,8 @@ function AiPanel({ result }: { result: BacktestResult }) {
   const baselineWr = result.trades.length ? wins / result.trades.length : 0;
   const positiveClassRatio = baselineWr;
   const hasSaved = typeof window !== "undefined" && !!localStorage.getItem("tc.ai.model." + engineKey);
+  const currentModelType = isMlpModel(model) ? "MLP" : "Logistic";
+  const featureCount = result.trades[0]?.features.length ?? 0;
 
   return (
     <section className="rounded-lg border border-primary/40 bg-card p-5 space-y-4">
@@ -730,10 +740,24 @@ function AiPanel({ result }: { result: BacktestResult }) {
           <Brain className="w-5 h-5 text-primary" />
           <h3 className="font-semibold">IA · Filtro sobre {STRATEGIES[engineKey].shortName}</h3>
           <Badge variant="outline" className="text-xs">
-            Regresión logística · {result.trades[0]?.features.length ?? 0} features
+            {model ? currentModelType : (modelType === "mlp" ? "MLP 32→16" : "Logistic")} · {featureCount} features
           </Badge>
         </div>
         <div className="flex gap-2">
+          <div className="inline-flex rounded-md border border-border overflow-hidden text-xs">
+            <button
+              type="button"
+              onClick={() => setModelType("logistic")}
+              className={`px-2 py-1 ${modelType === "logistic" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground"}`}
+              disabled={training}
+            >Logistic</button>
+            <button
+              type="button"
+              onClick={() => setModelType("mlp")}
+              className={`px-2 py-1 ${modelType === "mlp" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground"}`}
+              disabled={training}
+            >MLP</button>
+          </div>
           <Button size="sm" onClick={startTraining} disabled={training}>
             {training ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Brain className="w-3.5 h-3.5 mr-1" />}
             {training ? "Entrenando..." : model ? "Reentrenar" : "Entrenar modelo"}
