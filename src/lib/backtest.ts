@@ -341,7 +341,8 @@ export function runBacktest(
       outcome: sim.outcome,
       hourUTC,
       weekday,
-      features: buildFeatures(signal.scoreBreakdown, signal.bias, hourUTC, weekday),
+      features: signal.features
+        ?? buildFeatures(signal.scoreBreakdown, signal.bias, hourUTC, weekday),
     });
     // Advance i to past the trade close
     const exitIdx = m15.findIndex((c) => c.time >= sim.closeTime);

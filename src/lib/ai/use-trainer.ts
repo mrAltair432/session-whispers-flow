@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { TrainedModel } from "./logistic";
+import type { MlpTrainedModel } from "./mlp";
+
+export type AnyModel = TrainedModel | MlpTrainedModel;
+export function isMlpModel(m: AnyModel | null): m is MlpTrainedModel {
+  return !!m && (m as MlpTrainedModel).modelType === "mlp";
+}
 
 export type TrainProgress = { epoch: number; total: number; loss: number };
 
@@ -16,14 +22,15 @@ export function useAiTrainer() {
 
   function train(payload: {
     features: number[][]; labels: number[]; rMultiples: number[]; epochs?: number;
-  }): Promise<TrainedModel> {
+    modelType?: "logistic" | "mlp"; featureNames?: readonly string[];
+  }): Promise<AnyModel> {
     return new Promise((resolve, reject) => {
       const w = workerRef.current;
       if (!w) return reject(new Error("Trainer no inicializado"));
       const id = ++counter.current;
       setProgress({ epoch: 0, total: payload.epochs ?? 200, loss: 0 });
       const onMsg = (
-        e: MessageEvent<{ id: number; done?: boolean; error?: string; model?: TrainedModel; progress?: TrainProgress }>,
+        e: MessageEvent<{ id: number; done?: boolean; error?: string; model?: AnyModel; progress?: TrainProgress }>,
       ) => {
         if (e.data.id !== id) return;
         if (e.data.progress) { setProgress(e.data.progress); return; }
@@ -44,14 +51,14 @@ export function useAiTrainer() {
 }
 
 const MODEL_KEY_PREFIX = "tc.ai.model.";
-export function loadModel(engineKey: string): TrainedModel | null {
+export function loadModel(engineKey: string): AnyModel | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(MODEL_KEY_PREFIX + engineKey);
-    return raw ? (JSON.parse(raw) as TrainedModel) : null;
+    return raw ? (JSON.parse(raw) as AnyModel) : null;
   } catch { return null; }
 }
-export function saveModel(engineKey: string, model: TrainedModel) {
+export function saveModel(engineKey: string, model: AnyModel) {
   try { localStorage.setItem(MODEL_KEY_PREFIX + engineKey, JSON.stringify(model)); } catch { /* ignore */ }
 }
 export function deleteModel(engineKey: string) {
