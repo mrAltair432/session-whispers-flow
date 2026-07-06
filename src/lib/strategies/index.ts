@@ -1,11 +1,19 @@
 import type { Candle } from "../analysis";
 import { generateSignal as smcGenerate, type Signal } from "../signal-engine";
-import { evaluateNyContinuation } from "./ny-continuation";
+import { evaluateHarmonics } from "./ny-continuation";
 import { evaluateFiboScalping } from "./fibo-scalping";
 import { evaluateGoldScalping } from "./gold-scalping";
+import { evaluateEmaCrossM1 } from "./ema-cross-m1";
+import { evaluateStraddleBreakout } from "./straddle-breakout";
 import type { TfKey } from "../csv-parser";
 
-export type EngineKey = "smc_london" | "ny_continuation" | "fibo_scalping" | "gold_scalping";
+export type EngineKey =
+  | "smc_london"
+  | "ny_continuation"
+  | "fibo_scalping"
+  | "gold_scalping"
+  | "ema_cross_m1"
+  | "straddle_breakout";
 
 export type StrategyParams = {
   minScore?: number;
@@ -49,29 +57,29 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
   },
   ny_continuation: {
     key: "ny_continuation",
-    name: "Continuación NY (Pullback EMA50)",
-    shortName: "E2 · Continuación NY",
+    name: "Patrones Armónicos XABCD (Gartley / Bat)",
+    shortName: "E2 · Armónicos",
     description:
-      "Tendencia H4 + pullback a EMA50 en H1 + BOS en M15 dentro del solape Londres-NY (UTC 12-15).",
+      "Detecta patrones Gartley y Bat en pivotes H1 con confirmación M15 (vela rechazo + divergencia RSI) alineados al sesgo H4. Killzones Londres/NY.",
     defaultParams: { minScore: 65 },
-    killzoneHoursUTC: [12, 13, 14, 15],
+    killzoneHoursUTC: [7, 8, 9, 10, 12, 13, 14, 15],
     triggerTf: "M15",
     requiredTfs: ["H4", "H1", "M15"],
     evaluate: (bars, params) =>
-      evaluateNyContinuation(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], (params.minScore as number) ?? 65),
+      evaluateHarmonics(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], (params.minScore as number) ?? 65),
   },
   fibo_scalping: {
     key: "fibo_scalping",
-    name: "Fibo Scalping Oro (Londres)",
-    shortName: "E3 · Fibo Scalping",
+    name: "Fibo Scalping M5 Oro (Londres)",
+    shortName: "E3 · Fibo Scalping M5",
     description:
-      "Sesgo H4 + swing H1 + retroceso 0.5-0.786 con confirmación M15. Solo Londres (UTC 07-10), sin domingos y viernes hasta mediodía. Base para bot MT5 con grid limitado.",
+      "Sesgo H4 + swing H1 + retroceso 0.5-0.786 tocado en M15, con trigger de entrada en M5 (BOS20). Solo Londres UTC 07-11, sin domingos, viernes hasta mediodía. Base directa para bot MT5.",
     defaultParams: { minScore: 65 },
     killzoneHoursUTC: [7, 8, 9, 10],
-    triggerTf: "M15",
-    requiredTfs: ["H4", "H1", "M15"],
+    triggerTf: "M5",
+    requiredTfs: ["H4", "H1", "M15", "M5"],
     evaluate: (bars, params) =>
-      evaluateFiboScalping(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], (params.minScore as number) ?? 65),
+      evaluateFiboScalping(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 65),
   },
   gold_scalping: {
     key: "gold_scalping",
@@ -85,6 +93,32 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     requiredTfs: ["M1", "M5"],
     evaluate: (bars, params) =>
       evaluateGoldScalping(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 65),
+  },
+  ema_cross_m1: {
+    key: "ema_cross_m1",
+    name: "EMA Cross Reversal M1 (simétrico)",
+    shortName: "E5 · EMA Cross M1",
+    description:
+      "Cruce EMA9/EMA21 en M1 con filtros simétricos y estrictos: slope EMA9, RSI(14) 55/45, cruce de MACD histograma en 0 y ATR M5 sano. Killzone UTC 7-16. SL = 1.2×ATR(M1).",
+    defaultParams: { minScore: 70 },
+    killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    triggerTf: "M1",
+    requiredTfs: ["M1", "M5"],
+    evaluate: (bars, params) =>
+      evaluateEmaCrossM1(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 70),
+  },
+  straddle_breakout: {
+    key: "straddle_breakout",
+    name: "Straddle Breakout ATR M1",
+    shortName: "E6 · Straddle Breakout",
+    description:
+      "Straddle ±0.6×ATR(M5) alrededor del close previo M1. Entra en ruptura con cuerpo ≥55% del rango y sesgo M5 alineado. Killzones Londres 7-10 y NY 13-15 UTC. SL = 0.8×ATR(M1), sin cierre por tiempo.",
+    defaultParams: { minScore: 65 },
+    killzoneHoursUTC: [7, 8, 9, 13, 14],
+    triggerTf: "M1",
+    requiredTfs: ["M1", "M5"],
+    evaluate: (bars, params) =>
+      evaluateStraddleBreakout(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 65),
   },
 };
 
