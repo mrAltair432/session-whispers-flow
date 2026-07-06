@@ -1,14 +1,25 @@
 /// <reference lib="webworker" />
-import { runBacktest, type BacktestResult } from "./backtest";
+import { runBacktest, runBacktestBars, type BacktestResult } from "./backtest";
 import type { Candle } from "./analysis";
 import { STRATEGIES, type EngineKey } from "./strategies";
 
-type BacktestJob = {
+type BarsPayload = {
+  h4?: Candle[]; h1?: Candle[]; m15?: Candle[]; m5?: Candle[]; m1?: Candle[];
+};
+
+function toBars(p: BarsPayload) {
+  return {
+    H4: p.h4 ?? [],
+    H1: p.h1 ?? [],
+    M15: p.m15 ?? [],
+    M5: p.m5 ?? [],
+    M1: p.m1 ?? [],
+  } as const;
+}
+
+type BacktestJob = BarsPayload & {
   id: number;
   type: "backtest";
-  h4: Candle[];
-  h1: Candle[];
-  m15: Candle[];
   engines: EngineKey[];
   minScore?: number;
   excludeHours: number[];
@@ -16,34 +27,25 @@ type BacktestJob = {
   autoTimeFilters: boolean;
 };
 
-type OptimizeJob = {
+type OptimizeJob = BarsPayload & {
   id: number;
   type: "optimize";
-  h4: Candle[];
-  h1: Candle[];
-  m15: Candle[];
   engineKey: EngineKey;
   excludeWeekdays: number[];
   autoTimeFilters: boolean;
 };
 
-type BaselineJob = {
+type BaselineJob = BarsPayload & {
   id: number;
   type: "optimize-baseline";
-  h4: Candle[];
-  h1: Candle[];
-  m15: Candle[];
   engineKey: EngineKey;
   excludeWeekdays: number[];
   autoTimeFilters: boolean;
 };
 
-type OneComboJob = {
+type OneComboJob = BarsPayload & {
   id: number;
   type: "optimize-one";
-  h4: Candle[];
-  h1: Candle[];
-  m15: Candle[];
   engineKey: EngineKey;
   minScore: number;
   excludeHours: number[];
@@ -58,6 +60,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
   try {
     if (job.type === "backtest") {
       const results: BacktestResult[] = [];
+      const bars = toBars(job);
       for (let i = 0; i < job.engines.length; i++) {
         const engineKey = job.engines[i];
         (self as unknown as Worker).postMessage({
@@ -65,7 +68,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
           progress: { step: i, total: job.engines.length, label: STRATEGIES[engineKey].shortName },
         });
         results.push(
-          runBacktest(job.h4, job.h1, job.m15, {
+          runBacktestBars(bars, {
             engineKey,
             params: job.minScore !== undefined ? { minScore: job.minScore } : undefined,
             excludeHours: job.excludeHours,
@@ -76,13 +79,14 @@ self.onmessage = (e: MessageEvent<Job>) => {
       }
       (self as unknown as Worker).postMessage({ id: job.id, done: true, results });
     } else if (job.type === "optimize") {
+      const bars = toBars(job);
       const base = (STRATEGIES[job.engineKey].defaultParams.minScore as number | undefined) ?? 70;
       const minScores = Array.from(new Set([
         Math.max(50, base - 15), Math.max(50, base - 10), Math.max(50, base - 5),
         base,
         Math.min(95, base + 5), Math.min(95, base + 10), Math.min(95, base + 15),
       ])).sort((a, b) => a - b);
-      const baseline = runBacktest(job.h4, job.h1, job.m15, {
+      const baseline = runBacktestBars(bars, {
         engineKey: job.engineKey,
         excludeWeekdays: job.excludeWeekdays,
         autoTimeFilters: job.autoTimeFilters,
@@ -108,7 +112,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
             id: job.id,
             progress: { step, total, label: `minScore=${ms}` },
           });
-          const r = runBacktest(job.h4, job.h1, job.m15, {
+          const r = runBacktestBars(bars, {
             engineKey: job.engineKey,
             params: { minScore: ms },
             excludeHours: v.excludeHours,
@@ -138,7 +142,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
         id: job.id, done: true, rows, best: rows[0] ?? null, engineKey: job.engineKey,
       });
     } else if (job.type === "optimize-baseline") {
-      const baseline = runBacktest(job.h4, job.h1, job.m15, {
+      const baseline = runBacktestBars(toBars(job), {
         engineKey: job.engineKey,
         excludeWeekdays: job.excludeWeekdays,
         autoTimeFilters: job.autoTimeFilters,
@@ -150,7 +154,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
         .map((h) => h.hour);
       (self as unknown as Worker).postMessage({ id: job.id, done: true, worstHours });
     } else if (job.type === "optimize-one") {
-      const r = runBacktest(job.h4, job.h1, job.m15, {
+      const r = runBacktestBars(toBars(job), {
         engineKey: job.engineKey,
         params: { minScore: job.minScore },
         excludeHours: job.excludeHours,
@@ -185,3 +189,6 @@ self.onmessage = (e: MessageEvent<Job>) => {
 };
 
 export {};
+
+// Fuerza el bundler a no tree-shakear el wrapper legacy.
+export const __legacyBacktest = runBacktest;
