@@ -250,6 +250,95 @@ function BacktestPage() {
   const toggleEngine = (k: EngineKey) =>
     setEnginesSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
 
+  // ---- Walk-forward (single split 70/30) ----
+  const sliceByTime = (arr: Candle[] | undefined, tSplit: number) => {
+    if (!arr || !arr.length) return { train: [] as Candle[], test: [] as Candle[] };
+    let i = 0;
+    while (i < arr.length && arr[i].time <= tSplit) i++;
+    return { train: arr.slice(0, i), test: arr.slice(i) };
+  };
+  const runWalkForward = async () => {
+    setWfError(null);
+    setWfResult(null);
+    const strat = STRATEGIES[optimizerEngine];
+    const triggerBars = datasets[strat.triggerTf]?.candles ?? [];
+    if (!hasCustom || triggerBars.length < 200) {
+      setWfError(`Sube un CSV con al menos 200 velas ${strat.triggerTf} para hacer walk-forward.`);
+      return;
+    }
+    const optReqTfs = strat.requiredTfs;
+    const optMissing = optReqTfs.filter((tf) => !datasets[tf]?.candles.length);
+    if (optMissing.length > 0) {
+      setWfError(`Faltan TFs para ${strat.shortName}: ${optMissing.join(", ")}.`);
+      return;
+    }
+    setWfPending(true);
+    try {
+      const splitIdx = Math.floor(triggerBars.length * 0.7);
+      const tSplit = triggerBars[splitIdx].time;
+      const sH4 = sliceByTime(customH4, tSplit);
+      const sH1 = sliceByTime(customH1, tSplit);
+      const sM15 = sliceByTime(customM15, tSplit);
+      const sM5 = sliceByTime(customM5, tSplit);
+      const sM1 = sliceByTime(customM1, tSplit);
+      // 1) Optimizar en TRAIN
+      const optResp = await pool.optimize({
+        h4: sH4.train, h1: sH1.train, m15: sM15.train,
+        m5: sM5.train, m1: sM1.train,
+        engineKey: optimizerEngine,
+        excludeWeekdays, autoTimeFilters,
+        costs: costsPayload,
+      });
+      if (!optResp.best) {
+        setWfError("El optimizador no encontró un combo con muestra suficiente en TRAIN.");
+        return;
+      }
+      const best = optResp.best;
+      // 2) Backtest en TEST con combo fijado
+      const testResp = await worker.run<{ results: BacktestResult[] }>({
+        type: "backtest",
+        h4: sH4.test, h1: sH1.test, m15: sM15.test,
+        m5: sM5.test, m1: sM1.test,
+        engines: [optimizerEngine],
+        minScore: best.minScore,
+        excludeHours: best.excludeHours,
+        excludeWeekdays, autoTimeFilters,
+        costs: costsPayload,
+      });
+      const testR = testResp.results[0];
+      if (!testR) {
+        setWfError("Backtest de TEST vacío.");
+        return;
+      }
+      const tm = testR.metrics;
+      const trainBars = sH4.train.length + sH1.train.length + sM15.train.length + sM1.train.length;
+      const testBars = sH4.test.length + sH1.test.length + sM15.test.length + sM1.test.length;
+      void trainBars; void testBars;
+      setWfResult({
+        engineKey: optimizerEngine,
+        chosen: { minScore: best.minScore, excludeHours: best.excludeHours },
+        train: {
+          trades: best.trades, winrate: best.winrate, totalR: best.totalR,
+          expectancy: best.expectancy, profitFactor: best.profitFactor,
+          maxDrawdownR: best.maxDrawdownR, sharpe: best.sharpe,
+        },
+        test: {
+          trades: tm.trades, winrate: tm.winrate, totalR: tm.totalR,
+          expectancy: tm.expectancy,
+          profitFactor: isFinite(tm.profitFactor) ? tm.profitFactor : 99,
+          maxDrawdownR: tm.maxDrawdownR, sharpe: tm.sharpe,
+        },
+        splitTime: tSplit,
+        trainRange: { from: triggerBars[0].time, to: tSplit },
+        testRange: { from: tSplit, to: triggerBars[triggerBars.length - 1].time },
+      });
+    } catch (err) {
+      setWfError(err instanceof Error ? err.message : "Error en walk-forward");
+    } finally {
+      setWfPending(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card/50 backdrop-blur sticky top-0 z-10">
