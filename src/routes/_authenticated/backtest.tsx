@@ -342,7 +342,8 @@ function BacktestPage() {
             </div>
             <p className="text-xs text-muted-foreground">
               Acepta múltiples archivos. Detecta el timeframe automáticamente (M1/M5/M15/H1/H4/D1).
-              Solo se usan H4, H1 y M15 en el backtest; los demás se ignoran por ahora.
+              <strong className="text-foreground"> Si subes M1</strong>, el sistema deriva M5/M15/H1/H4
+              automáticamente — con un solo archivo puedes correr todas las estrategias (incluida E4 Gold Scalping).
             </p>
             <input
               type="file"
