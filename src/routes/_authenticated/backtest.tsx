@@ -358,7 +358,7 @@ function BacktestPage() {
                   .filter((k) => datasets[k])
                   .map((tf) => {
                     const d = datasets[tf]!;
-                    const used = tf === "H4" || tf === "H1" || tf === "M15";
+                    const used = requiredTfs.includes(tf);
                     return (
                       <div key={tf} className="flex items-center gap-2 font-mono">
                         <span className={used ? "text-emerald-400" : "text-muted-foreground"}>
