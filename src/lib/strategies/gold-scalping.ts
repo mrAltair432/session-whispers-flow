@@ -124,15 +124,43 @@ export function evaluateGoldScalping(
   const m1Atr = atr(m1, 14);
   const lastM1Atr = m1Atr[m1Atr.length - 1] || 0.3;
 
-  // ---- Scoring (0-100) ----
+  // ---- Scoring graduado (0-100) — distribución amplia para que minScore discrimine ----
+  // 1) Fuerza del sweep: cuán profundo pasó el extremo de Londres (en ATR M1). 0-15.
+  const sweepDepth =
+    bias === "long" ? (lonLow - sweepPrice) : (sweepPrice - lonHigh);
+  const sweepAtrRatio = Math.max(0, sweepDepth) / Math.max(0.1, lastM1Atr);
+  const sweepStrength = Math.min(15, Math.round(sweepAtrRatio * 10));
+
+  // 2) Calidad del rango Londres: 1.5→3 USD = pobre, 3→6 = bueno, >6 = fuerte. 0-20.
+  const rangeQuality = Math.max(0, Math.min(20, Math.round(((lonRange - 1.5) / 4.5) * 20)));
+
+  // 3) Fuerza de la vela de reversión: body / range de la última M1. 0-15.
+  const lastBody = Math.abs(last.close - last.open);
+  const lastRange = Math.max(0.01, last.high - last.low);
+  const revStrength = Math.min(15, Math.round((lastBody / lastRange) * 15));
+
+  // 4) Cuán "estirado" está el precio del VWAP en σ. 0.5σ=5, 1σ=10, ≥1.5σ=15. 0-15.
+  const sigmaSafe = Math.max(0.05, sigma);
+  const stretchSigmas = Math.abs(last.close - vwap) / sigmaSafe;
+  const stretchScore = Math.min(15, Math.round(stretchSigmas * 10));
+
+  // 5) Killzone: 14 UTC (NY open puro) = 12, 13 UTC (solape Londres) = 7.
+  const killzoneScore = hUTC === 14 ? 12 : 7;
+
+  // 6) ATR M5: 0.5→0.8=5, 0.8→1.2=8, ≥1.2=10. 0-10.
+  const atrScore = lastM5Atr >= 1.2 ? 10 : lastM5Atr >= 0.8 ? 8 : lastM5Atr >= 0.5 ? 5 : 2;
+
+  // 7) Alineación M5: alineado=8, neutral=4, contra=1. 0-8.
+  const alignScore = m5Aligned ? 8 : (Math.abs(m5Diff) < 0.0002 ? 4 : 1);
+
   const breakdown = {
-    h4Trend: 15,                              // sweep válido (slot reutilizado para features IA)
-    h1Sweep: 25,                              // rango Londres válido
-    m15Fvg: revConfirm ? 15 : 0,              // reversión confirmada
-    m15Bos: stretched ? 15 : 5,               // en zona extrema del VWAP
-    killzone: hUTC === 13 || hUTC === 14 ? 12 : 6,
-    atr: lastM5Atr >= 0.8 ? 10 : lastM5Atr >= 0.5 ? 7 : 3,
-    h1Alignment: m5Aligned ? 8 : 3,
+    h4Trend: sweepStrength,   // 0-15  (slot: fuerza sweep)
+    h1Sweep: rangeQuality,    // 0-20  (slot: calidad rango Londres)
+    m15Fvg: revStrength,      // 0-15  (slot: fuerza reversión)
+    m15Bos: stretchScore,     // 0-15  (slot: distancia VWAP en σ)
+    killzone: killzoneScore,  // 7 o 12
+    atr: atrScore,            // 2-10
+    h1Alignment: alignScore,  // 1, 4 u 8
     total: 0,
   };
   breakdown.total =
