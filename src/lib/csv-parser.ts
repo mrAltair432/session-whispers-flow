@@ -58,3 +58,32 @@ export function classifyTimeframe(mins: number): TfKey | null {
   if (mins >= 1300 && mins <= 1500) return "D1";
   return null;
 }
+
+export const TF_MINUTES: Record<TfKey, number> = {
+  M1: 1, M5: 5, M15: 15, H1: 60, H4: 240, D1: 1440,
+};
+
+// Agrega velas OHLC de un TF pequeño a uno mayor. Alinea buckets al epoch UTC
+// (Math.floor(time/bucket)*bucket) — coincide con el corte que MT5 usa para
+// cerrar velas H1/H4/D1 en tiempo servidor UTC.
+export function aggregateCandles(source: Candle[], targetMinutes: number): Candle[] {
+  if (!source.length || targetMinutes <= 0) return [];
+  const bucketSec = targetMinutes * 60;
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+  let curBucket = -1;
+  for (const c of source) {
+    const b = Math.floor(c.time / bucketSec) * bucketSec;
+    if (b !== curBucket) {
+      if (cur) out.push(cur);
+      cur = { time: b, open: c.open, high: c.high, low: c.low, close: c.close };
+      curBucket = b;
+    } else if (cur) {
+      if (c.high > cur.high) cur.high = c.high;
+      if (c.low < cur.low) cur.low = c.low;
+      cur.close = c.close;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
