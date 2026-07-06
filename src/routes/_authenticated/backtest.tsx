@@ -1453,3 +1453,33 @@ function PfHeatmap({ rows, onPick }: { rows: OptRow[]; onPick: (ms: number, hrs:
     </div>
   );
 }
+
+// Formatea milisegundos como mm:ss (o hh:mm:ss si >1h).
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${mm}:${pad(ss)}`;
+}
+
+// Renderiza los detalles de una fase de simulación del worker: barra %, trades, elapsed, ETA.
+function formatWorkerProgress(p: {
+  phase?: string; percent?: number; trades?: number;
+  phaseStartedAt?: number; jobStartedAt?: number;
+}): string {
+  const parts: string[] = [];
+  if (p.phase) parts.push(`fase: ${p.phase}`);
+  if (typeof p.percent === "number") parts.push(`${Math.round(p.percent * 100)}%`);
+  if (typeof p.trades === "number") parts.push(`${p.trades} trades`);
+  if (p.phaseStartedAt) {
+    const el = Date.now() - p.phaseStartedAt;
+    parts.push(`${formatElapsed(el)}`);
+    if (p.percent && p.percent > 0.02) {
+      const eta = (el / p.percent) * (1 - p.percent);
+      parts.push(`ETA ${formatElapsed(eta)}`);
+    }
+  }
+  return parts.join(" · ");
+}
