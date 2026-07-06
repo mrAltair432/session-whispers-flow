@@ -1,5 +1,6 @@
 import type { Candle } from "./analysis";
-import { getStrategy, type EngineKey, type StrategyParams } from "./strategies";
+import { getStrategy, type Bars, type EngineKey, type StrategyParams } from "./strategies";
+import type { TfKey } from "./csv-parser";
 
 export type BacktestOptions = {
   engineKey: EngineKey;
@@ -284,50 +285,64 @@ function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
   };
 }
 
-export function runBacktest(
-  h4: Candle[],
-  h1: Candle[],
-  m15: Candle[],
-  opts: BacktestOptions,
-): BacktestResult {
-  const warmup = opts.warmupBars ?? 100;
-  const maxHold = opts.maxHoldBars ?? 96;
-  const cooldown = opts.cooldownBars ?? 16;
-  const autoFilters = opts.autoTimeFilters ?? true;
+// Motor genérico: itera sobre el TF trigger de la estrategia y le pasa un
+// mapa de bars ya sliced hasta el bar actual. La simulación de SL/TP corre
+// sobre las velas del TF trigger (mayor resolución para scalping M1).
+export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResult {
   const strategy = getStrategy(opts.engineKey);
   const params: StrategyParams = { ...strategy.defaultParams, ...(opts.params ?? {}) };
+  const triggerTf = strategy.triggerTf;
+  const triggerBars = bars[triggerTf] ?? [];
+  if (!triggerBars.length) {
+    return { engineKey: opts.engineKey, metrics: computeMetrics([]), trades: [] };
+  }
+  // Defaults escalan según TF trigger: M1 requiere holds/cooldowns más largos
+  // en bars pero más cortos en tiempo real (24h M1 = 1440 bars).
+  const tfMinutes: Record<TfKey, number> = { M1: 1, M5: 5, M15: 15, H1: 60, H4: 240, D1: 1440 };
+  const defaultMaxHold = Math.max(20, Math.round((24 * 60) / tfMinutes[triggerTf])); // ~24h
+  const defaultCooldown = Math.max(3, Math.round((4 * 60) / tfMinutes[triggerTf]));  // ~4h
+  const warmup = opts.warmupBars ?? (triggerTf === "M1" ? 300 : 100);
+  const maxHold = opts.maxHoldBars ?? defaultMaxHold;
+  const cooldown = opts.cooldownBars ?? defaultCooldown;
+  const autoFilters = opts.autoTimeFilters ?? true;
   const trades: BacktestTrade[] = [];
+
+  // Pre-computar los otros TFs necesarios (excluyendo el trigger).
+  const auxTfs = strategy.requiredTfs.filter((tf) => tf !== triggerTf);
 
   let lastExitIdx = -Infinity;
 
-  for (let i = warmup; i < m15.length - 2; i++) {
+  for (let i = warmup; i < triggerBars.length - 2; i++) {
     if (i - lastExitIdx < cooldown) continue;
-    const barTime = m15[i].time;
+    const barTime = triggerBars[i].time;
     const d0 = new Date(barTime * 1000);
     if (autoFilters && isMarketClosedOrRisky(d0)) continue;
     if (opts.excludeHours?.includes(d0.getUTCHours())) continue;
     if (opts.excludeWeekdays?.includes(d0.getUTCDay())) continue;
-    const m15Window = m15.slice(0, i + 1);
-    const t = m15[i].time;
-    const h1Window = sliceUpTo(h1, t);
-    const h4Window = sliceUpTo(h4, t);
 
-    const signal = strategy.evaluate(h4Window, h1Window, m15Window, params);
+    const slicedBars: Bars = {
+      [triggerTf]: triggerBars.slice(0, i + 1),
+    };
+    for (const tf of auxTfs) {
+      const arr = bars[tf];
+      if (arr && arr.length) slicedBars[tf] = sliceUpTo(arr, barTime);
+    }
+
+    const signal = strategy.evaluate(slicedBars, params);
     if (!signal) continue;
 
-    const entryBar = m15[i + 1];
+    const entryBar = triggerBars[i + 1];
     const entry = entryBar.open;
-    // Re-anchor SL relative to actual entry: keep same distance as signal computed
     const dist = Math.abs(signal.entry - signal.stopLoss);
     const sl = signal.bias === "long" ? entry - dist : entry + dist;
     const tp1 = signal.bias === "long" ? entry + dist : entry - dist;
     const tp2 = signal.bias === "long" ? entry + dist * 2 : entry - dist * 2;
     const tp3 = signal.bias === "long" ? entry + dist * 3 : entry - dist * 3;
 
-    const sim = simulateTrade(m15, i + 1, signal.bias, entry, sl, tp1, tp2, tp3, maxHold);
-    const d = new Date(entryBar.time * 1000);
-    const hourUTC = d.getUTCHours();
-    const weekday = d.getUTCDay();
+    const sim = simulateTrade(triggerBars, i + 1, signal.bias, entry, sl, tp1, tp2, tp3, maxHold);
+    const de = new Date(entryBar.time * 1000);
+    const hourUTC = de.getUTCHours();
+    const weekday = de.getUTCDay();
     trades.push({
       openTime: entryBar.time,
       closeTime: sim.closeTime,
@@ -344,11 +359,21 @@ export function runBacktest(
       features: signal.features
         ?? buildFeatures(signal.scoreBreakdown, signal.bias, hourUTC, weekday),
     });
-    // Advance i to past the trade close
-    const exitIdx = m15.findIndex((c) => c.time >= sim.closeTime);
+    const exitIdx = triggerBars.findIndex((c) => c.time >= sim.closeTime);
     lastExitIdx = exitIdx >= 0 ? exitIdx : i + maxHold;
     i = lastExitIdx;
   }
 
   return { engineKey: opts.engineKey, metrics: computeMetrics(trades), trades };
+}
+
+// Wrapper legacy: firma antigua (h4, h1, m15) → nueva API basada en Bars.
+// Mantiene compatibilidad con callers que aún no pasan M1/M5.
+export function runBacktest(
+  h4: Candle[],
+  h1: Candle[],
+  m15: Candle[],
+  opts: BacktestOptions,
+): BacktestResult {
+  return runBacktestBars({ H4: h4, H1: h1, M15: m15 }, opts);
 }

@@ -11,7 +11,7 @@ import {
 import type { BacktestResult } from "@/lib/backtest";
 import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
-import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, type TfKey } from "@/lib/csv-parser";
+import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, aggregateCandles, TF_MINUTES, type TfKey } from "@/lib/csv-parser";
 import { useBacktestWorker } from "@/lib/use-backtest-worker";
 import { useOptimizerPool } from "@/lib/use-optimizer-pool";
 import { useAiTrainer, loadModel, saveModel, deleteModel, isMlpModel, type AnyModel } from "@/lib/ai/use-trainer";
@@ -28,7 +28,8 @@ export const Route = createFileRoute("/_authenticated/backtest")({
 });
 
 type CustomData = { tf: TfKey; candles: Candle[]; fileName: string };
-const REQUIRED_BACKTEST_TFS: TfKey[] = ["H4", "H1", "M15"];
+// TFs candidatos que se auto-agregan desde M1 si están vacíos.
+const AGGREGATABLE_TFS: TfKey[] = ["M5", "M15", "H1", "H4"];
 
 type SavedConfig = { minScore: number; excludeHours: number[]; savedAt: number };
 const CONFIG_KEY = "tc.backtest.appliedConfig.v1";
@@ -82,39 +83,44 @@ function BacktestPage() {
   const customH4 = datasets.H4?.candles;
   const customH1 = datasets.H1?.candles;
   const customM15 = datasets.M15?.candles;
-  const hasCustom = !!(customH4?.length || customH1?.length || customM15?.length);
-  const missingRequiredTfs = REQUIRED_BACKTEST_TFS.filter((tf) => !datasets[tf]?.candles.length);
+  const customM5 = datasets.M5?.candles;
+  const customM1 = datasets.M1?.candles;
+  const hasCustom = !!(customH4?.length || customH1?.length || customM15?.length || customM1?.length);
+  // Los TFs requeridos dependen de las estrategias seleccionadas.
+  const requiredTfs = Array.from(new Set(
+    enginesSelected.flatMap((k) => STRATEGIES[k].requiredTfs),
+  )) as TfKey[];
+  const missingRequiredTfs = requiredTfs.filter((tf) => !datasets[tf]?.candles.length);
 
   const m = useMutation<BacktestPayload, Error, void>({
     mutationFn: async () => {
       if (hasCustom) {
-        if (missingRequiredTfs.length > 0 || !customH4?.length || !customH1?.length || !customM15?.length) {
+        if (missingRequiredTfs.length > 0) {
           return {
             results: [],
             range: { from: 0, to: 0, m15Bars: 0, h1Bars: 0, h4Bars: 0 },
-            error: `Para correr local con CSV faltan: ${missingRequiredTfs.join(", ")}. Sube H4, H1 y M15 juntos para evitar enviar datos pesados al servidor.`,
+            error: `Para correr local con CSV faltan: ${missingRequiredTfs.join(", ")}. Tip: si subes M1 el sistema deriva M5/M15/H1/H4 automáticamente.`,
           };
         }
         // Corremos en un Web Worker: usa un core extra de CPU y no congela la UI.
         const resp = await worker.run<{ results: BacktestResult[] }>({
           type: "backtest",
-          h4: customH4,
-          h1: customH1,
-          m15: customM15,
+          h4: customH4, h1: customH1, m15: customM15, m5: customM5, m1: customM1,
           engines: enginesSelected,
           minScore: minScoreOverride === "" ? undefined : Number(minScoreOverride),
           excludeHours,
           excludeWeekdays,
           autoTimeFilters,
         });
+        const refTf = customM1?.length ? customM1 : (customM15 ?? customH1 ?? customH4 ?? []);
         return {
           results: resp.results,
           range: {
-            from: customM15[0]?.time ?? 0,
-            to: customM15[customM15.length - 1]?.time ?? 0,
-            m15Bars: customM15.length,
-            h1Bars: customH1.length,
-            h4Bars: customH4.length,
+            from: refTf[0]?.time ?? 0,
+            to: refTf[refTf.length - 1]?.time ?? 0,
+            m15Bars: customM15?.length ?? 0,
+            h1Bars: customH1?.length ?? 0,
+            h4Bars: customH4?.length ?? 0,
           },
           error: null,
         };
@@ -134,17 +140,20 @@ function BacktestPage() {
   const o = useMutation<OptimizerPayload, Error, void>({
     mutationFn: async () => {
       if (hasCustom) {
-        if (missingRequiredTfs.length > 0 || !customH4?.length || !customH1?.length || !customM15?.length) {
+        const optReqTfs = STRATEGIES[optimizerEngine].requiredTfs;
+        const optMissing = optReqTfs.filter((tf) => !datasets[tf]?.candles.length);
+        if (optMissing.length > 0) {
           return {
             rows: [],
             best: null,
-            error: `Para optimizar local con CSV faltan: ${missingRequiredTfs.join(", ")}. Sube H4, H1 y M15 juntos.`,
+            error: `Para optimizar ${STRATEGIES[optimizerEngine].shortName} faltan: ${optMissing.join(", ")}.`,
             engineKey: optimizerEngine,
           };
         }
         // Pool de workers: paraleliza cada combo (minScore × variante) en varios núcleos.
         const resp = await pool.optimize({
-          h4: customH4, h1: customH1, m15: customM15,
+          h4: customH4 ?? [], h1: customH1 ?? [], m15: customM15 ?? [],
+          m5: customM5, m1: customM1,
           engineKey: optimizerEngine,
           excludeWeekdays,
           autoTimeFilters,
@@ -178,10 +187,22 @@ function BacktestPage() {
         errs.push(`⚠️ ${file.name}: TF=${mins.toFixed(1)}min no reconocido`);
         continue;
       }
-      if (candles.length > 200_000) {
-        errs.push(`⚠️ ${file.name}: ${candles.length} velas (>200k) — puede saturar el navegador`);
+      if (candles.length > 500_000) {
+        errs.push(`⚠️ ${file.name}: ${candles.length} velas (>500k) — puede saturar el navegador`);
       }
       updates[tf] = { tf, candles, fileName: file.name };
+    }
+    // Auto-agregar: si se cargó M1, generar M5/M15/H1/H4 automáticamente
+    // (solo si el usuario no subió esos TFs manualmente).
+    const m1Data = updates.M1?.candles;
+    if (m1Data?.length) {
+      for (const tf of AGGREGATABLE_TFS) {
+        if (updates[tf] || datasets[tf]?.candles.length) continue;
+        const agg = aggregateCandles(m1Data, TF_MINUTES[tf]);
+        if (agg.length) {
+          updates[tf] = { tf, candles: agg, fileName: `↳ derivado de M1` };
+        }
+      }
     }
     setDatasets((prev) => ({ ...prev, ...updates }));
     setParseErrors(errs);
@@ -321,7 +342,8 @@ function BacktestPage() {
             </div>
             <p className="text-xs text-muted-foreground">
               Acepta múltiples archivos. Detecta el timeframe automáticamente (M1/M5/M15/H1/H4/D1).
-              Solo se usan H4, H1 y M15 en el backtest; los demás se ignoran por ahora.
+              <strong className="text-foreground"> Si subes M1</strong>, el sistema deriva M5/M15/H1/H4
+              automáticamente — con un solo archivo puedes correr todas las estrategias (incluida E4 Gold Scalping).
             </p>
             <input
               type="file"

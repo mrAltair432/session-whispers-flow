@@ -120,7 +120,7 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
 
         for (const key of engines) {
           const strat = STRATEGIES[key];
-          const signal = strat.evaluate(h4, h1, m15, strat.defaultParams);
+          const signal = strat.evaluate({ H4: h4, H1: h1, M15: m15 }, strat.defaultParams);
           const usersCount = users?.length ?? 0;
           if (!signal) {
             report.push({ engine: key, users: usersCount, signals: 0, sent: 0 });
