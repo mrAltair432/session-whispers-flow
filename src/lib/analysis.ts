@@ -165,3 +165,35 @@ export function getKillzone(unixSeconds: number): "london" | "ny" | null {
   if (hUTC >= 12 && hUTC < 15) return "ny";
   return null;
 }
+
+// RSI (Wilder). Devuelve array del mismo largo (primeros `period` = 50 neutral).
+export function rsi(candles: Candle[], period = 14): number[] {
+  const out: number[] = new Array(candles.length).fill(50);
+  if (candles.length <= period) return out;
+  let gain = 0, loss = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = candles[i].close - candles[i - 1].close;
+    if (d >= 0) gain += d; else loss -= d;
+  }
+  gain /= period; loss /= period;
+  out[period] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+  for (let i = period + 1; i < candles.length; i++) {
+    const d = candles[i].close - candles[i - 1].close;
+    const g = d > 0 ? d : 0;
+    const l = d < 0 ? -d : 0;
+    gain = (gain * (period - 1) + g) / period;
+    loss = (loss * (period - 1) + l) / period;
+    out[i] = loss === 0 ? 100 : 100 - 100 / (1 + gain / loss);
+  }
+  return out;
+}
+
+// MACD standard 12/26/9. Devuelve tres arrays alineados con `values`.
+export function macd(values: number[], fast = 12, slow = 26, signal = 9): { macd: number[]; signal: number[]; hist: number[] } {
+  const fastE = ema(values, fast);
+  const slowE = ema(values, slow);
+  const macdLine = fastE.map((v, i) => v - slowE[i]);
+  const signalLine = ema(macdLine, signal);
+  const hist = macdLine.map((v, i) => v - signalLine[i]);
+  return { macd: macdLine, signal: signalLine, hist };
+}
