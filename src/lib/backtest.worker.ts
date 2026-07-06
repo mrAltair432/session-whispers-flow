@@ -150,9 +150,19 @@ self.onmessage = (e: MessageEvent<Job>) => {
       const worstHours = baseline.metrics.byHour
         .filter((h) => h.trades >= 2 && h.totalR < 0)
         .sort((a, b) => a.totalR - b.totalR)
-        .slice(0, 3)
+        .slice(0, 5)
         .map((h) => h.hour);
-      (self as unknown as Worker).postMessage({ id: job.id, done: true, worstHours });
+      const positiveHours = baseline.metrics.byHour
+        .filter((h) => h.trades >= 2 && h.totalR > 0)
+        .map((h) => h.hour);
+      // hours to EXCLUDE if we keep only positive hours = everything not in positiveHours
+      const allHours = Array.from({ length: 24 }, (_, i) => i);
+      const keepOnlyPositive = positiveHours.length > 0
+        ? allHours.filter((h) => !positiveHours.includes(h))
+        : [];
+      (self as unknown as Worker).postMessage({
+        id: job.id, done: true, worstHours, keepOnlyPositive,
+      });
     } else if (job.type === "optimize-one") {
       const r = runBacktestBars(toBars(job), {
         engineKey: job.engineKey,
