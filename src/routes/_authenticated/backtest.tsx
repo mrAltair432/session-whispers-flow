@@ -591,6 +591,13 @@ function BacktestPage() {
                 {parseErrors.map((e, i) => <div key={i}>{e}</div>)}
               </div>
             )}
+            {parseInfo && (
+              <div className="text-xs text-muted-foreground">
+                Parseo: <span className="font-mono">{(parseInfo.ms / 1000).toFixed(2)}s</span>
+                {" · "}<span className="font-mono">{parseInfo.rows.toLocaleString()}</span> velas
+                {" · "}<span className="font-mono">{parseInfo.files}</span> archivo(s)
+              </div>
+            )}
           </div>
         </section>
 
