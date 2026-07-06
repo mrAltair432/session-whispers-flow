@@ -80,13 +80,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Trading Compass — XAU/USD" },
-      { name: "description", content: "Dashboard de análisis multi-timeframe para XAU/USD en la sesión de Londres." },
+      { name: "description", content: "Dashboard de análisis multi-timeframe para XAU/USD." },
       { name: "author", content: "Trading Compass" },
       { property: "og:title", content: "Trading Compass — XAU/USD" },
       { property: "og:description", content: "Dashboard de análisis multi-timeframe para XAU/USD." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Trading Compass — XAU/USD" },
+      { name: "twitter:description", content: "Dashboard de análisis multi-timeframe para XAU/USD." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ee1f311b-e241-4a64-b341-f4239601e7fc/id-preview-08a2b7b8--ab140c2e-e87d-4efe-93e3-7ee43ff16310.lovable.app-1783379372384.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/ee1f311b-e241-4a64-b341-f4239601e7fc/id-preview-08a2b7b8--ab140c2e-e87d-4efe-93e3-7ee43ff16310.lovable.app-1783379372384.png" },
     ],
     links: [
       {
