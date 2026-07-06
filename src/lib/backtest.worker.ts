@@ -175,7 +175,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
       const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);
       const pf = isFinite(mm.profitFactor) ? mm.profitFactor : 3;
       // Objetivo: maximizar Profit Factor con muestra suficiente y drawdown controlado.
-      const composite = mm.trades >= 15
+      const composite = mm.trades >= 10
         ? pf * sampleWeight - 0.05 * mm.maxDrawdownR
         : -Infinity;
       (self as unknown as Worker).postMessage({
