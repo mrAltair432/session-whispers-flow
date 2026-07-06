@@ -1112,6 +1112,103 @@ function fmtDate(unix: number) {
   return new Date(unix * 1000).toISOString().slice(0, 10);
 }
 
+function WalkForwardPanel({ wf, onApply }: { wf: WfResult; onApply: (ms: number, hrs: number[]) => void }) {
+  const ratio = (a: number, b: number) => {
+    if (!isFinite(a) || !isFinite(b) || b === 0) return null;
+    return a / b;
+  };
+  const pfRatio = ratio(wf.test.profitFactor, wf.train.profitFactor);
+  const expRatio = ratio(wf.test.expectancy, wf.train.expectancy);
+  // Robustness: PF test vs train.
+  const robust = pfRatio == null
+    ? { label: "—", cls: "text-muted-foreground" }
+    : pfRatio >= 0.8
+    ? { label: "🟢 Robusto (≥80%)", cls: "text-emerald-400" }
+    : pfRatio >= 0.5
+    ? { label: "🟡 Aceptable (50–80%)", cls: "text-amber-400" }
+    : { label: "🔴 Overfit (<50%)", cls: "text-red-400" };
+  const sameSign = wf.train.totalR >= 0 && wf.test.totalR >= 0;
+  return (
+    <section className="rounded-lg border border-primary/30 bg-card p-4 space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Split className="w-4 h-4 text-primary" />
+        <h3 className="font-semibold">
+          Walk-forward 70/30 · {STRATEGIES[wf.engineKey].shortName}
+        </h3>
+        <Badge variant="outline" className="text-xs font-mono">
+          minScore={wf.chosen.minScore}
+          {wf.chosen.excludeHours.length ? ` · excl [${wf.chosen.excludeHours.join(",")}]` : ""}
+        </Badge>
+        <span className={`text-xs font-medium ${robust.cls}`}>{robust.label}</span>
+        <div className="ml-auto">
+          <Button size="sm" variant="outline" onClick={() => onApply(wf.chosen.minScore, wf.chosen.excludeHours)}>
+            <Save className="w-3.5 h-3.5 mr-1" /> Aplicar combo
+          </Button>
+        </div>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        TRAIN <span className="font-mono text-foreground">{fmtDate(wf.trainRange.from)} → {fmtDate(wf.trainRange.to)}</span>
+        {" "}· TEST <span className="font-mono text-foreground">{fmtDate(wf.testRange.from)} → {fmtDate(wf.testRange.to)}</span>
+        {" "}· Split UTC <span className="font-mono">{new Date(wf.splitTime * 1000).toISOString().slice(0, 16).replace("T", " ")}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-muted-foreground uppercase">
+            <tr>
+              <th className="text-left py-2">Ventana</th>
+              <th className="text-right py-2">Trades</th>
+              <th className="text-right py-2">WR</th>
+              <th className="text-right py-2">Total R</th>
+              <th className="text-right py-2">Expect.</th>
+              <th className="text-right py-2">PF</th>
+              <th className="text-right py-2">Max DD</th>
+              <th className="text-right py-2">Sharpe</th>
+            </tr>
+          </thead>
+          <tbody>
+            <Row label="TRAIN (70% · in-sample)" m={wf.train} />
+            <Row label="TEST (30% · out-of-sample)" m={wf.test} highlight />
+          </tbody>
+        </table>
+      </div>
+      <div className="text-xs text-muted-foreground space-y-1">
+        <p>
+          <span className="text-foreground font-medium">Degradación PF:</span>{" "}
+          {pfRatio == null ? "—" : `${(pfRatio * 100).toFixed(0)}% del TRAIN`}
+          {" · "}
+          <span className="text-foreground font-medium">Expectancy test/train:</span>{" "}
+          {expRatio == null ? "—" : `${(expRatio * 100).toFixed(0)}%`}
+          {" · "}
+          <span className={sameSign ? "text-emerald-400" : "text-red-400"}>
+            {sameSign ? "Ambas ventanas positivas" : "Signo distinto entre ventanas"}
+          </span>
+        </p>
+        <p>
+          Regla: si PF test ≥ 80% del train y totalR test &gt; 0, la combo es candidata para paper-trading.
+          Si &lt; 50%, hay overfitting: no la lleves a FTMO.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function Row({ label, m, highlight }: { label: string; m: WfWindowMetrics; highlight?: boolean }) {
+  return (
+    <tr className={`border-t border-border ${highlight ? "bg-emerald-500/5" : ""}`}>
+      <td className="py-2">{label}</td>
+      <td className="text-right py-2 font-mono">{m.trades}</td>
+      <td className="text-right py-2 font-mono">{(m.winrate * 100).toFixed(1)}%</td>
+      <td className={`text-right py-2 font-mono ${m.totalR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+        {m.totalR >= 0 ? "+" : ""}{m.totalR.toFixed(2)}
+      </td>
+      <td className="text-right py-2 font-mono">{m.expectancy.toFixed(2)}</td>
+      <td className="text-right py-2 font-mono">{m.profitFactor.toFixed(2)}</td>
+      <td className="text-right py-2 font-mono text-red-400">-{m.maxDrawdownR.toFixed(2)}</td>
+      <td className="text-right py-2 font-mono">{m.sharpe.toFixed(2)}</td>
+    </tr>
+  );
+}
+
 function PfHeatmap({ rows, onPick }: { rows: OptRow[]; onPick: (ms: number, hrs: number[]) => void }) {
   if (!rows.length) return null;
   const scoresSet = new Set<number>();
