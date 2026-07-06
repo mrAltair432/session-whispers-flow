@@ -733,6 +733,20 @@ function BacktestPage() {
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{o.data.error}</div>
         )}
 
+        {wfError && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{wfError}</div>
+        )}
+        {wfPending && (
+          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            Walk-forward: optimizando en TRAIN (70%) y validando en TEST (30%)…
+            {pool.progress && <span className="text-muted-foreground">· <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos</span>}
+          </div>
+        )}
+        {wfResult && !wfPending && (
+          <WalkForwardPanel wf={wfResult} onApply={(ms, hrs) => saveAndApply(wfResult.engineKey, ms, hrs)} />
+        )}
+
         {o.isPending && (
           <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
