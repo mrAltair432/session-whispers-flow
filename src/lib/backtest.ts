@@ -371,10 +371,10 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const entryBarIdx = i + 1 + costs.latencyBars;
     if (entryBarIdx >= triggerBars.length - 1) continue;
     const entryBar = triggerBars[entryBarIdx];
-    // Precio de entrada degradado por costPerSideUsd (spread/2 + slippage + commission)
-    const entry = signal.bias === "long"
-      ? entryBar.open + costPerSideUsd
-      : entryBar.open - costPerSideUsd;
+    // Entrada = open de la barra tras la latencia. El coste se descuenta
+    // enteramente vía rMultiple dentro de simulateTrade (entry fill + cada
+    // cierre parcial/total), evitando distorsionar SL/TP absolutos.
+    const entry = entryBar.open;
     const dist = Math.abs(signal.entry - signal.stopLoss);
     const sl = signal.bias === "long" ? entry - dist : entry + dist;
     const tp1 = signal.bias === "long" ? entry + dist : entry - dist;
