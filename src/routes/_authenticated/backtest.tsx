@@ -17,7 +17,7 @@ import { useOptimizerPool, type OptRow } from "@/lib/use-optimizer-pool";
 import { useAiTrainer, loadModel, saveModel, deleteModel, isMlpModel, type AnyModel } from "@/lib/ai/use-trainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2 } from "lucide-react";
+import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2, Split } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
 } from "recharts";
@@ -70,6 +70,25 @@ function BacktestPage() {
   );
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
+
+  // Walk-forward simple (single split 70/30 cronológico).
+  type WfCombo = { minScore: number; excludeHours: number[] };
+  type WfWindowMetrics = {
+    trades: number; winrate: number; totalR: number; expectancy: number;
+    profitFactor: number; maxDrawdownR: number; sharpe: number;
+  };
+  type WfResult = {
+    engineKey: EngineKey;
+    chosen: WfCombo;
+    train: WfWindowMetrics;
+    test: WfWindowMetrics;
+    splitTime: number;
+    trainRange: { from: number; to: number };
+    testRange: { from: number; to: number };
+  };
+  const [wfPending, setWfPending] = useState(false);
+  const [wfError, setWfError] = useState<string | null>(null);
+  const [wfResult, setWfResult] = useState<WfResult | null>(null);
 
   // Al cambiar de estrategia a optimizar, precargar su config guardada (si existe)
   // en los controles superiores para que el próximo backtest la use.
