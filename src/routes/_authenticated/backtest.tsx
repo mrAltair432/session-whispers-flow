@@ -86,6 +86,12 @@ function BacktestPage() {
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
 
+  // Ventana temporal: presets de últimos N meses aplicados a TODOS los CSVs
+  // antes de correr backtest/optimizer/walk-forward. Útil para iterar rápido
+  // sobre 10 años de M1 sin esperar la corrida completa.
+  type MonthsWindow = 3 | 6 | 12 | 24 | "all";
+  const [monthsWindow, setMonthsWindow] = useState<MonthsWindow>("all");
+
   // Walk-forward simple (single split 70/30 cronológico).
   const [wfPending, setWfPending] = useState(false);
   const [wfError, setWfError] = useState<string | null>(null);
@@ -111,11 +117,41 @@ function BacktestPage() {
     persistSavedConfigs(merged);
   };
 
-  const customH4 = datasets.H4?.candles;
-  const customH1 = datasets.H1?.candles;
-  const customM15 = datasets.M15?.candles;
-  const customM5 = datasets.M5?.candles;
-  const customM1 = datasets.M1?.candles;
+  // Aplicamos la ventana temporal a partir del último tick disponible en cualquier TF.
+  const rawH4 = datasets.H4?.candles;
+  const rawH1 = datasets.H1?.candles;
+  const rawM15 = datasets.M15?.candles;
+  const rawM5 = datasets.M5?.candles;
+  const rawM1 = datasets.M1?.candles;
+  const latestTime = Math.max(
+    rawM1?.[rawM1.length - 1]?.time ?? 0,
+    rawM5?.[rawM5.length - 1]?.time ?? 0,
+    rawM15?.[rawM15.length - 1]?.time ?? 0,
+    rawH1?.[rawH1.length - 1]?.time ?? 0,
+    rawH4?.[rawH4.length - 1]?.time ?? 0,
+  );
+  const windowSecs = monthsWindow === "all" ? 0 : monthsWindow * 30 * 24 * 3600;
+  const windowFrom = windowSecs > 0 && latestTime > 0 ? latestTime - windowSecs : 0;
+  const sliceWindow = (arr: Candle[] | undefined): Candle[] | undefined => {
+    if (!arr || !arr.length || windowFrom <= 0) return arr;
+    // Búsqueda binaria del primer índice con time >= windowFrom
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (arr[mid].time < windowFrom) lo = mid + 1; else hi = mid;
+    }
+    return lo === 0 ? arr : arr.slice(lo);
+  };
+  const customH4 = sliceWindow(rawH4);
+  const customH1 = sliceWindow(rawH1);
+  const customM15 = sliceWindow(rawM15);
+  const customM5 = sliceWindow(rawM5);
+  const customM1 = sliceWindow(rawM1);
+  // Conteo de velas efectivo tras aplicar ventana (para el badge de UI).
+  const windowedCounts: Partial<Record<TfKey, number>> = {
+    M1: customM1?.length, M5: customM5?.length, M15: customM15?.length,
+    H1: customH1?.length, H4: customH4?.length,
+  };
   const hasCustom = !!(customH4?.length || customH1?.length || customM15?.length || customM1?.length);
   // Los TFs requeridos dependen de las estrategias seleccionadas.
   const requiredTfs = Array.from(new Set(
@@ -485,13 +521,17 @@ function BacktestPage() {
                   .map((tf) => {
                     const d = datasets[tf]!;
                     const used = requiredTfs.includes(tf);
+                    const eff = windowedCounts[tf];
+                    const trimmed = monthsWindow !== "all" && typeof eff === "number" && eff < d.candles.length;
                     return (
                       <div key={tf} className="flex items-center gap-2 font-mono">
                         <span className={used ? "text-emerald-400" : "text-muted-foreground"}>
                           {used ? "✓" : "·"} {tf}
                         </span>
                         <span className="text-muted-foreground truncate">{d.fileName}</span>
-                        <span className="text-muted-foreground">— {d.candles.length} velas</span>
+                        <span className="text-muted-foreground">
+                          — {d.candles.length} velas{trimmed ? ` (usando ${eff})` : ""}
+                        </span>
                         <button onClick={() => clearDataset(tf)} className="ml-auto text-muted-foreground hover:text-foreground">
                           <X className="w-3 h-3" />
                         </button>
@@ -500,6 +540,32 @@ function BacktestPage() {
                   })}
               </div>
             )}
+            {/* Ventana temporal (presets de últimos N meses) */}
+            <div className="pt-2 border-t border-border mt-2">
+              <div className="text-xs font-medium mb-1.5">Ventana de datos (últimos N meses)</div>
+              <div className="flex flex-wrap gap-1.5">
+                {([3, 6, 12, 24, "all"] as MonthsWindow[]).map((w) => {
+                  const active = monthsWindow === w;
+                  const label = w === "all" ? "Todo" : `${w}m`;
+                  return (
+                    <button
+                      key={String(w)}
+                      onClick={() => setMonthsWindow(w)}
+                      className={`text-xs px-2.5 py-1 rounded font-mono border ${
+                        active
+                          ? "bg-primary/20 border-primary/60 text-foreground"
+                          : "border-border hover:bg-background/50 text-muted-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Recorta desde la última vela hacia atrás. Aplica a backtest, optimizador y walk-forward por igual.
+              </p>
+            </div>
             {parseErrors.length > 0 && (
               <div className="text-xs text-amber-400 space-y-0.5">
                 {parseErrors.map((e, i) => <div key={i}>{e}</div>)}
