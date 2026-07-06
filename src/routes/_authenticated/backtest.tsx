@@ -57,6 +57,12 @@ function persistSavedConfigs(cfg: Partial<Record<EngineKey, SavedConfig>>) {
 }
 
 function BacktestPage() {
+  // Tick para poder mostrar cronómetros en vivo mientras corre el worker.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, []);
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
   const allStrategies = listStrategies();
