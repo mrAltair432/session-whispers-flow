@@ -2,6 +2,17 @@ import type { Candle } from "./analysis";
 import { getStrategy, type Bars, type EngineKey, type StrategyParams } from "./strategies";
 import type { TfKey } from "./csv-parser";
 
+// Costos de ejecución en USD (oro). El precio de entrada real se degrada
+// `costPerSideUsd` (=spread/2 + slippage + commission) en contra del bias,
+// e igual en cada cierre (parcial o total). Se descuentan del rMultiple
+// usando el riesgo inicial de la operación.
+export type BacktestCosts = {
+  spreadUsd?: number;      // ancho total del spread bid/ask (default per-TF)
+  slippageUsd?: number;    // deslizamiento por ejecución (default per-TF)
+  commissionUsd?: number;  // comisión por lado en USD (default 0)
+  latencyBars?: number;    // barras de retraso entre señal y entrada (default per-TF)
+};
+
 export type BacktestOptions = {
   engineKey: EngineKey;
   params?: StrategyParams;
@@ -11,6 +22,7 @@ export type BacktestOptions = {
   excludeHours?: number[]; // UTC hours to skip (manual)
   excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
   autoTimeFilters?: boolean; // default true: aplica filtros de horario peligroso del oro
+  costs?: BacktestCosts;
 };
 
 export type BacktestTrade = {
@@ -145,6 +157,7 @@ function simulateTrade(
   tp2: number,
   tp3: number,
   maxHoldBars: number,
+  costPerSideUsd: number,
 ): { exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number } {
   const initRisk = Math.abs(entry - initialSL);
   let sl = initialSL;
@@ -153,10 +166,15 @@ function simulateTrade(
   // Position allocation: 50% to TP1, 30% to TP2, 20% runner
   let realizedR = 0;
   let remaining = 1;
+  const costR = initRisk > 0 ? costPerSideUsd / initRisk : 0;
+  // Coste de la entrada (una sola vez sobre la posición completa)
+  realizedR -= costR;
 
   const closeRemaining = (price: number, time: number, outcome: BacktestTrade["outcome"]) => {
     const moveR = bias === "long" ? (price - entry) / initRisk : (entry - price) / initRisk;
     realizedR += remaining * moveR;
+    // Coste de cierre proporcional al tamaño que queda
+    realizedR -= remaining * costR;
     remaining = 0;
     return { exit: price, rMultiple: realizedR, outcome, closeTime: time };
   };
@@ -174,17 +192,20 @@ function simulateTrade(
       }
       if (!tp1Hit && c.high >= tp1) {
         realizedR += 0.5 * 1;
+        realizedR -= 0.5 * costR; // coste del parcial 50%
         remaining -= 0.5;
         sl = entry; // move to BE
         tp1Hit = true;
       }
       if (tp1Hit && !tp2Hit && c.high >= tp2) {
         realizedR += 0.3 * 2;
+        realizedR -= 0.3 * costR; // coste del parcial 30%
         remaining -= 0.3;
         tp2Hit = true;
       }
       if (tp2Hit && c.high >= tp3) {
         realizedR += 0.2 * 3;
+        realizedR -= 0.2 * costR; // coste del cierre runner
         remaining = 0;
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time };
       }
@@ -196,17 +217,20 @@ function simulateTrade(
       }
       if (!tp1Hit && c.low <= tp1) {
         realizedR += 0.5 * 1;
+        realizedR -= 0.5 * costR;
         remaining -= 0.5;
         sl = entry;
         tp1Hit = true;
       }
       if (tp1Hit && !tp2Hit && c.low <= tp2) {
         realizedR += 0.3 * 2;
+        realizedR -= 0.3 * costR;
         remaining -= 0.3;
         tp2Hit = true;
       }
       if (tp2Hit && c.low <= tp3) {
         realizedR += 0.2 * 3;
+        realizedR -= 0.2 * costR;
         remaining = 0;
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time };
       }
@@ -305,6 +329,18 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
   const maxHold = opts.maxHoldBars ?? defaultMaxHold;
   const cooldown = opts.cooldownBars ?? defaultCooldown;
   const autoFilters = opts.autoTimeFilters ?? true;
+  // Defaults de costos por TF trigger. Oro retail M1: spread ~0.20 USD,
+  // slippage ~0.05 USD, latencia 1 barra (60s) señal→ejecución.
+  const costDefaults: BacktestCosts = triggerTf === "M1"
+    ? { spreadUsd: 0.20, slippageUsd: 0.05, commissionUsd: 0, latencyBars: 1 }
+    : { spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0 };
+  const costs: Required<BacktestCosts> = {
+    spreadUsd: opts.costs?.spreadUsd ?? costDefaults.spreadUsd ?? 0,
+    slippageUsd: opts.costs?.slippageUsd ?? costDefaults.slippageUsd ?? 0,
+    commissionUsd: opts.costs?.commissionUsd ?? costDefaults.commissionUsd ?? 0,
+    latencyBars: opts.costs?.latencyBars ?? costDefaults.latencyBars ?? 0,
+  };
+  const costPerSideUsd = costs.spreadUsd / 2 + costs.slippageUsd + costs.commissionUsd;
   const trades: BacktestTrade[] = [];
 
   // Pre-computar los otros TFs necesarios (excluyendo el trigger).
@@ -331,7 +367,13 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const signal = strategy.evaluate(slicedBars, params);
     if (!signal) continue;
 
-    const entryBar = triggerBars[i + 1];
+    // Latencia: entramos en la apertura de la barra i+1+latency
+    const entryBarIdx = i + 1 + costs.latencyBars;
+    if (entryBarIdx >= triggerBars.length - 1) continue;
+    const entryBar = triggerBars[entryBarIdx];
+    // Entrada = open de la barra tras la latencia. El coste se descuenta
+    // enteramente vía rMultiple dentro de simulateTrade (entry fill + cada
+    // cierre parcial/total), evitando distorsionar SL/TP absolutos.
     const entry = entryBar.open;
     const dist = Math.abs(signal.entry - signal.stopLoss);
     const sl = signal.bias === "long" ? entry - dist : entry + dist;
@@ -339,7 +381,7 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const tp2 = signal.bias === "long" ? entry + dist * 2 : entry - dist * 2;
     const tp3 = signal.bias === "long" ? entry + dist * 3 : entry - dist * 3;
 
-    const sim = simulateTrade(triggerBars, i + 1, signal.bias, entry, sl, tp1, tp2, tp3, maxHold);
+    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd);
     const de = new Date(entryBar.time * 1000);
     const hourUTC = de.getUTCHours();
     const weekday = de.getUTCDay();

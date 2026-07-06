@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { runBacktest, runBacktestBars, type BacktestResult } from "./backtest";
+import { runBacktest, runBacktestBars, type BacktestResult, type BacktestCosts } from "./backtest";
 import type { Candle } from "./analysis";
 import { STRATEGIES, type EngineKey } from "./strategies";
 
@@ -25,6 +25,7 @@ type BacktestJob = BarsPayload & {
   excludeHours: number[];
   excludeWeekdays: number[];
   autoTimeFilters: boolean;
+  costs?: BacktestCosts;
 };
 
 type OptimizeJob = BarsPayload & {
@@ -33,6 +34,7 @@ type OptimizeJob = BarsPayload & {
   engineKey: EngineKey;
   excludeWeekdays: number[];
   autoTimeFilters: boolean;
+  costs?: BacktestCosts;
 };
 
 type BaselineJob = BarsPayload & {
@@ -41,6 +43,7 @@ type BaselineJob = BarsPayload & {
   engineKey: EngineKey;
   excludeWeekdays: number[];
   autoTimeFilters: boolean;
+  costs?: BacktestCosts;
 };
 
 type OneComboJob = BarsPayload & {
@@ -51,6 +54,7 @@ type OneComboJob = BarsPayload & {
   excludeHours: number[];
   excludeWeekdays: number[];
   autoTimeFilters: boolean;
+  costs?: BacktestCosts;
 };
 
 type Job = BacktestJob | OptimizeJob | BaselineJob | OneComboJob;
@@ -74,6 +78,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
             excludeHours: job.excludeHours,
             excludeWeekdays: job.excludeWeekdays,
             autoTimeFilters: job.autoTimeFilters,
+            costs: job.costs,
           }),
         );
       }
@@ -90,6 +95,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
         engineKey: job.engineKey,
         excludeWeekdays: job.excludeWeekdays,
         autoTimeFilters: job.autoTimeFilters,
+        costs: job.costs,
       });
       const worstHours = baseline.metrics.byHour
         .filter((h) => h.trades >= 2 && h.totalR < 0)
@@ -118,6 +124,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
             excludeHours: v.excludeHours,
             excludeWeekdays: job.excludeWeekdays,
             autoTimeFilters: job.autoTimeFilters,
+            costs: job.costs,
           });
           const mm = r.metrics;
           const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);
@@ -146,6 +153,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
         engineKey: job.engineKey,
         excludeWeekdays: job.excludeWeekdays,
         autoTimeFilters: job.autoTimeFilters,
+        costs: job.costs,
       });
       const worstHours = baseline.metrics.byHour
         .filter((h) => h.trades >= 2 && h.totalR < 0)
@@ -170,6 +178,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
         excludeHours: job.excludeHours,
         excludeWeekdays: job.excludeWeekdays,
         autoTimeFilters: job.autoTimeFilters,
+        costs: job.costs,
       });
       const mm = r.metrics;
       const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);

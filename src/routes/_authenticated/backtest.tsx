@@ -54,6 +54,17 @@ function BacktestPage() {
   const [autoTimeFilters, setAutoTimeFilters] = useState(true);
   const [excludeHours, setExcludeHours] = useState<number[]>([]);
   const [excludeWeekdays, setExcludeWeekdays] = useState<number[]>([]);
+  // Simulación de costos de ejecución (oro retail). Defaults calibrados
+  // para scalping M1: spread 0.20 USD, slippage 0.05 USD por lado,
+  // sin comisión, latencia 1 barra (60s señal→fill).
+  const [costsEnabled, setCostsEnabled] = useState(true);
+  const [spreadUsd, setSpreadUsd] = useState(0.20);
+  const [slippageUsd, setSlippageUsd] = useState(0.05);
+  const [commissionUsd, setCommissionUsd] = useState(0);
+  const [latencyBars, setLatencyBars] = useState(1);
+  const costsPayload = costsEnabled
+    ? { spreadUsd, slippageUsd, commissionUsd, latencyBars }
+    : { spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0 };
   const [datasets, setDatasets] = useState<Record<TfKey, CustomData | undefined>>(
     {} as Record<TfKey, CustomData | undefined>,
   );
@@ -111,6 +122,7 @@ function BacktestPage() {
           excludeHours,
           excludeWeekdays,
           autoTimeFilters,
+          costs: costsPayload,
         });
         const refTf = customM1?.length ? customM1 : (customM15 ?? customH1 ?? customH4 ?? []);
         return {
@@ -157,6 +169,7 @@ function BacktestPage() {
           engineKey: optimizerEngine,
           excludeWeekdays,
           autoTimeFilters,
+          costs: costsPayload,
         });
         return { rows: resp.rows, best: resp.best, error: null, engineKey: optimizerEngine };
       }
@@ -434,6 +447,65 @@ function BacktestPage() {
               ))}
             </div>
           </div>
+        </section>
+
+        {/* Cost simulation */}
+        <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                checked={costsEnabled}
+                onChange={(e) => setCostsEnabled(e.target.checked)}
+              />
+              Simular costos de ejecución
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Se aplica en TF M1 por defecto. Coste por lado = <span className="font-mono">spread/2 + slippage + comisión</span>.
+              Se descuenta en cada fill (entrada + parciales + cierre).
+            </p>
+          </div>
+          <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 ${costsEnabled ? "" : "opacity-50 pointer-events-none"}`}>
+            <label className="text-xs space-y-1">
+              <div className="text-muted-foreground">Spread (USD)</div>
+              <input
+                type="number" step="0.01" min="0" value={spreadUsd}
+                onChange={(e) => setSpreadUsd(Math.max(0, Number(e.target.value) || 0))}
+                className="w-full px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+              />
+            </label>
+            <label className="text-xs space-y-1">
+              <div className="text-muted-foreground">Slippage/lado (USD)</div>
+              <input
+                type="number" step="0.01" min="0" value={slippageUsd}
+                onChange={(e) => setSlippageUsd(Math.max(0, Number(e.target.value) || 0))}
+                className="w-full px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+              />
+            </label>
+            <label className="text-xs space-y-1">
+              <div className="text-muted-foreground">Comisión/lado (USD)</div>
+              <input
+                type="number" step="0.01" min="0" value={commissionUsd}
+                onChange={(e) => setCommissionUsd(Math.max(0, Number(e.target.value) || 0))}
+                className="w-full px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+              />
+            </label>
+            <label className="text-xs space-y-1">
+              <div className="text-muted-foreground">Latencia (barras TF trigger)</div>
+              <input
+                type="number" step="1" min="0" max="10" value={latencyBars}
+                onChange={(e) => setLatencyBars(Math.max(0, Math.min(10, Math.round(Number(e.target.value) || 0))))}
+                className="w-full px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+              />
+            </label>
+          </div>
+          {costsEnabled && (
+            <p className="text-xs text-muted-foreground">
+              Coste por lado actual: <span className="font-mono text-foreground">{(spreadUsd/2 + slippageUsd + commissionUsd).toFixed(3)} USD</span>
+              {" "}· Ida y vuelta simple: <span className="font-mono text-foreground">{(spreadUsd + 2*slippageUsd + 2*commissionUsd).toFixed(3)} USD</span>
+              {" "}· Latencia: <span className="font-mono text-foreground">{latencyBars}</span> {latencyBars === 1 ? "barra" : "barras"} tras la señal
+            </p>
+          )}
         </section>
 
         {/* Optimizer results */}
