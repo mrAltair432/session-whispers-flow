@@ -31,6 +31,21 @@ type CustomData = { tf: TfKey; candles: Candle[]; fileName: string };
 // TFs candidatos que se auto-agregan desde M1 si están vacíos.
 const AGGREGATABLE_TFS: TfKey[] = ["M5", "M15", "H1", "H4"];
 
+type WfCombo = { minScore: number; excludeHours: number[] };
+type WfWindowMetrics = {
+  trades: number; winrate: number; totalR: number; expectancy: number;
+  profitFactor: number; maxDrawdownR: number; sharpe: number;
+};
+type WfResult = {
+  engineKey: EngineKey;
+  chosen: WfCombo;
+  train: WfWindowMetrics;
+  test: WfWindowMetrics;
+  splitTime: number;
+  trainRange: { from: number; to: number };
+  testRange: { from: number; to: number };
+};
+
 type SavedConfig = { minScore: number; excludeHours: number[]; savedAt: number };
 const CONFIG_KEY = "tc.backtest.appliedConfig.v1";
 function loadSavedConfigs(): Partial<Record<EngineKey, SavedConfig>> {
@@ -72,20 +87,6 @@ function BacktestPage() {
   const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
 
   // Walk-forward simple (single split 70/30 cronológico).
-  type WfCombo = { minScore: number; excludeHours: number[] };
-  type WfWindowMetrics = {
-    trades: number; winrate: number; totalR: number; expectancy: number;
-    profitFactor: number; maxDrawdownR: number; sharpe: number;
-  };
-  type WfResult = {
-    engineKey: EngineKey;
-    chosen: WfCombo;
-    train: WfWindowMetrics;
-    test: WfWindowMetrics;
-    splitTime: number;
-    trainRange: { from: number; to: number };
-    testRange: { from: number; to: number };
-  };
   const [wfPending, setWfPending] = useState(false);
   const [wfError, setWfError] = useState<string | null>(null);
   const [wfResult, setWfResult] = useState<WfResult | null>(null);
