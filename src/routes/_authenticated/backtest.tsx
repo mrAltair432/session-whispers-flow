@@ -537,6 +537,7 @@ function BacktestPage() {
                 </tbody>
               </table>
             </div>
+            <PfHeatmap rows={o.data.rows} onPick={(ms, hrs) => saveAndApply(o.data!.engineKey, ms, hrs)} />
             {o.isPending && pool.progress && (
               <div className="text-xs text-muted-foreground">
                 Pool de {pool.progress.workers} workers · {pool.progress.done}/{pool.progress.total} combos
