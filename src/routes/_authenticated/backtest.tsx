@@ -17,7 +17,7 @@ import { useOptimizerPool, type OptRow } from "@/lib/use-optimizer-pool";
 import { useAiTrainer, loadModel, saveModel, deleteModel, isMlpModel, type AnyModel } from "@/lib/ai/use-trainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2 } from "lucide-react";
+import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2, Split } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
 } from "recharts";
@@ -30,6 +30,21 @@ export const Route = createFileRoute("/_authenticated/backtest")({
 type CustomData = { tf: TfKey; candles: Candle[]; fileName: string };
 // TFs candidatos que se auto-agregan desde M1 si están vacíos.
 const AGGREGATABLE_TFS: TfKey[] = ["M5", "M15", "H1", "H4"];
+
+type WfCombo = { minScore: number; excludeHours: number[] };
+type WfWindowMetrics = {
+  trades: number; winrate: number; totalR: number; expectancy: number;
+  profitFactor: number; maxDrawdownR: number; sharpe: number;
+};
+type WfResult = {
+  engineKey: EngineKey;
+  chosen: WfCombo;
+  train: WfWindowMetrics;
+  test: WfWindowMetrics;
+  splitTime: number;
+  trainRange: { from: number; to: number };
+  testRange: { from: number; to: number };
+};
 
 type SavedConfig = { minScore: number; excludeHours: number[]; savedAt: number };
 const CONFIG_KEY = "tc.backtest.appliedConfig.v1";
@@ -70,6 +85,11 @@ function BacktestPage() {
   );
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
+
+  // Walk-forward simple (single split 70/30 cronológico).
+  const [wfPending, setWfPending] = useState(false);
+  const [wfError, setWfError] = useState<string | null>(null);
+  const [wfResult, setWfResult] = useState<WfResult | null>(null);
 
   // Al cambiar de estrategia a optimizar, precargar su config guardada (si existe)
   // en los controles superiores para que el próximo backtest la use.
@@ -231,6 +251,95 @@ function BacktestPage() {
   const toggleEngine = (k: EngineKey) =>
     setEnginesSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
 
+  // ---- Walk-forward (single split 70/30) ----
+  const sliceByTime = (arr: Candle[] | undefined, tSplit: number) => {
+    if (!arr || !arr.length) return { train: [] as Candle[], test: [] as Candle[] };
+    let i = 0;
+    while (i < arr.length && arr[i].time <= tSplit) i++;
+    return { train: arr.slice(0, i), test: arr.slice(i) };
+  };
+  const runWalkForward = async () => {
+    setWfError(null);
+    setWfResult(null);
+    const strat = STRATEGIES[optimizerEngine];
+    const triggerBars = datasets[strat.triggerTf]?.candles ?? [];
+    if (!hasCustom || triggerBars.length < 200) {
+      setWfError(`Sube un CSV con al menos 200 velas ${strat.triggerTf} para hacer walk-forward.`);
+      return;
+    }
+    const optReqTfs = strat.requiredTfs;
+    const optMissing = optReqTfs.filter((tf) => !datasets[tf]?.candles.length);
+    if (optMissing.length > 0) {
+      setWfError(`Faltan TFs para ${strat.shortName}: ${optMissing.join(", ")}.`);
+      return;
+    }
+    setWfPending(true);
+    try {
+      const splitIdx = Math.floor(triggerBars.length * 0.7);
+      const tSplit = triggerBars[splitIdx].time;
+      const sH4 = sliceByTime(customH4, tSplit);
+      const sH1 = sliceByTime(customH1, tSplit);
+      const sM15 = sliceByTime(customM15, tSplit);
+      const sM5 = sliceByTime(customM5, tSplit);
+      const sM1 = sliceByTime(customM1, tSplit);
+      // 1) Optimizar en TRAIN
+      const optResp = await pool.optimize({
+        h4: sH4.train, h1: sH1.train, m15: sM15.train,
+        m5: sM5.train, m1: sM1.train,
+        engineKey: optimizerEngine,
+        excludeWeekdays, autoTimeFilters,
+        costs: costsPayload,
+      });
+      if (!optResp.best) {
+        setWfError("El optimizador no encontró un combo con muestra suficiente en TRAIN.");
+        return;
+      }
+      const best = optResp.best;
+      // 2) Backtest en TEST con combo fijado
+      const testResp = await worker.run<{ results: BacktestResult[] }>({
+        type: "backtest",
+        h4: sH4.test, h1: sH1.test, m15: sM15.test,
+        m5: sM5.test, m1: sM1.test,
+        engines: [optimizerEngine],
+        minScore: best.minScore,
+        excludeHours: best.excludeHours,
+        excludeWeekdays, autoTimeFilters,
+        costs: costsPayload,
+      });
+      const testR = testResp.results[0];
+      if (!testR) {
+        setWfError("Backtest de TEST vacío.");
+        return;
+      }
+      const tm = testR.metrics;
+      const trainBars = sH4.train.length + sH1.train.length + sM15.train.length + sM1.train.length;
+      const testBars = sH4.test.length + sH1.test.length + sM15.test.length + sM1.test.length;
+      void trainBars; void testBars;
+      setWfResult({
+        engineKey: optimizerEngine,
+        chosen: { minScore: best.minScore, excludeHours: best.excludeHours },
+        train: {
+          trades: best.trades, winrate: best.winrate, totalR: best.totalR,
+          expectancy: best.expectancy, profitFactor: best.profitFactor,
+          maxDrawdownR: best.maxDrawdownR, sharpe: best.sharpe,
+        },
+        test: {
+          trades: tm.trades, winrate: tm.winrate, totalR: tm.totalR,
+          expectancy: tm.expectancy,
+          profitFactor: isFinite(tm.profitFactor) ? tm.profitFactor : 99,
+          maxDrawdownR: tm.maxDrawdownR, sharpe: tm.sharpe,
+        },
+        splitTime: tSplit,
+        trainRange: { from: triggerBars[0].time, to: tSplit },
+        testRange: { from: tSplit, to: triggerBars[triggerBars.length - 1].time },
+      });
+    } catch (err) {
+      setWfError(err instanceof Error ? err.message : "Error en walk-forward");
+    } finally {
+      setWfPending(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card/50 backdrop-blur sticky top-0 z-10">
@@ -257,6 +366,10 @@ function BacktestPage() {
             <Button onClick={() => o.mutate()} disabled={o.isPending} size="sm" variant="outline">
               {o.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Wand2 className="w-4 h-4 mr-1" />}
               {o.isPending ? "Optimizando..." : `Optimizar ${STRATEGIES[optimizerEngine].shortName}`}
+            </Button>
+            <Button onClick={runWalkForward} disabled={wfPending || o.isPending} size="sm" variant="outline">
+              {wfPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Split className="w-4 h-4 mr-1" />}
+              {wfPending ? "Walk-forward..." : "Walk-forward 70/30"}
             </Button>
           </div>
         </div>
@@ -621,6 +734,20 @@ function BacktestPage() {
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{o.data.error}</div>
         )}
 
+        {wfError && (
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{wfError}</div>
+        )}
+        {wfPending && (
+          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            Walk-forward: optimizando en TRAIN (70%) y validando en TEST (30%)…
+            {pool.progress && <span className="text-muted-foreground">· <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos</span>}
+          </div>
+        )}
+        {wfResult && !wfPending && (
+          <WalkForwardPanel wf={wfResult} onApply={(ms, hrs) => saveAndApply(wfResult.engineKey, ms, hrs)} />
+        )}
+
         {o.isPending && (
           <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
@@ -983,6 +1110,103 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
 function fmtDate(unix: number) {
   if (!unix) return "—";
   return new Date(unix * 1000).toISOString().slice(0, 10);
+}
+
+function WalkForwardPanel({ wf, onApply }: { wf: WfResult; onApply: (ms: number, hrs: number[]) => void }) {
+  const ratio = (a: number, b: number) => {
+    if (!isFinite(a) || !isFinite(b) || b === 0) return null;
+    return a / b;
+  };
+  const pfRatio = ratio(wf.test.profitFactor, wf.train.profitFactor);
+  const expRatio = ratio(wf.test.expectancy, wf.train.expectancy);
+  // Robustness: PF test vs train.
+  const robust = pfRatio == null
+    ? { label: "—", cls: "text-muted-foreground" }
+    : pfRatio >= 0.8
+    ? { label: "🟢 Robusto (≥80%)", cls: "text-emerald-400" }
+    : pfRatio >= 0.5
+    ? { label: "🟡 Aceptable (50–80%)", cls: "text-amber-400" }
+    : { label: "🔴 Overfit (<50%)", cls: "text-red-400" };
+  const sameSign = wf.train.totalR >= 0 && wf.test.totalR >= 0;
+  return (
+    <section className="rounded-lg border border-primary/30 bg-card p-4 space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Split className="w-4 h-4 text-primary" />
+        <h3 className="font-semibold">
+          Walk-forward 70/30 · {STRATEGIES[wf.engineKey].shortName}
+        </h3>
+        <Badge variant="outline" className="text-xs font-mono">
+          minScore={wf.chosen.minScore}
+          {wf.chosen.excludeHours.length ? ` · excl [${wf.chosen.excludeHours.join(",")}]` : ""}
+        </Badge>
+        <span className={`text-xs font-medium ${robust.cls}`}>{robust.label}</span>
+        <div className="ml-auto">
+          <Button size="sm" variant="outline" onClick={() => onApply(wf.chosen.minScore, wf.chosen.excludeHours)}>
+            <Save className="w-3.5 h-3.5 mr-1" /> Aplicar combo
+          </Button>
+        </div>
+      </div>
+      <div className="text-xs text-muted-foreground">
+        TRAIN <span className="font-mono text-foreground">{fmtDate(wf.trainRange.from)} → {fmtDate(wf.trainRange.to)}</span>
+        {" "}· TEST <span className="font-mono text-foreground">{fmtDate(wf.testRange.from)} → {fmtDate(wf.testRange.to)}</span>
+        {" "}· Split UTC <span className="font-mono">{new Date(wf.splitTime * 1000).toISOString().slice(0, 16).replace("T", " ")}</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-muted-foreground uppercase">
+            <tr>
+              <th className="text-left py-2">Ventana</th>
+              <th className="text-right py-2">Trades</th>
+              <th className="text-right py-2">WR</th>
+              <th className="text-right py-2">Total R</th>
+              <th className="text-right py-2">Expect.</th>
+              <th className="text-right py-2">PF</th>
+              <th className="text-right py-2">Max DD</th>
+              <th className="text-right py-2">Sharpe</th>
+            </tr>
+          </thead>
+          <tbody>
+            <Row label="TRAIN (70% · in-sample)" m={wf.train} />
+            <Row label="TEST (30% · out-of-sample)" m={wf.test} highlight />
+          </tbody>
+        </table>
+      </div>
+      <div className="text-xs text-muted-foreground space-y-1">
+        <p>
+          <span className="text-foreground font-medium">Degradación PF:</span>{" "}
+          {pfRatio == null ? "—" : `${(pfRatio * 100).toFixed(0)}% del TRAIN`}
+          {" · "}
+          <span className="text-foreground font-medium">Expectancy test/train:</span>{" "}
+          {expRatio == null ? "—" : `${(expRatio * 100).toFixed(0)}%`}
+          {" · "}
+          <span className={sameSign ? "text-emerald-400" : "text-red-400"}>
+            {sameSign ? "Ambas ventanas positivas" : "Signo distinto entre ventanas"}
+          </span>
+        </p>
+        <p>
+          Regla: si PF test ≥ 80% del train y totalR test &gt; 0, la combo es candidata para paper-trading.
+          Si &lt; 50%, hay overfitting: no la lleves a FTMO.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+function Row({ label, m, highlight }: { label: string; m: WfWindowMetrics; highlight?: boolean }) {
+  return (
+    <tr className={`border-t border-border ${highlight ? "bg-emerald-500/5" : ""}`}>
+      <td className="py-2">{label}</td>
+      <td className="text-right py-2 font-mono">{m.trades}</td>
+      <td className="text-right py-2 font-mono">{(m.winrate * 100).toFixed(1)}%</td>
+      <td className={`text-right py-2 font-mono ${m.totalR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+        {m.totalR >= 0 ? "+" : ""}{m.totalR.toFixed(2)}
+      </td>
+      <td className="text-right py-2 font-mono">{m.expectancy.toFixed(2)}</td>
+      <td className="text-right py-2 font-mono">{m.profitFactor.toFixed(2)}</td>
+      <td className="text-right py-2 font-mono text-red-400">-{m.maxDrawdownR.toFixed(2)}</td>
+      <td className="text-right py-2 font-mono">{m.sharpe.toFixed(2)}</td>
+    </tr>
+  );
 }
 
 function PfHeatmap({ rows, onPick }: { rows: OptRow[]; onPick: (ms: number, hrs: number[]) => void }) {
