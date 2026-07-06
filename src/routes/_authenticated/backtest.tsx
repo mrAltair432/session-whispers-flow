@@ -521,13 +521,17 @@ function BacktestPage() {
                   .map((tf) => {
                     const d = datasets[tf]!;
                     const used = requiredTfs.includes(tf);
+                    const eff = windowedCounts[tf];
+                    const trimmed = monthsWindow !== "all" && typeof eff === "number" && eff < d.candles.length;
                     return (
                       <div key={tf} className="flex items-center gap-2 font-mono">
                         <span className={used ? "text-emerald-400" : "text-muted-foreground"}>
                           {used ? "✓" : "·"} {tf}
                         </span>
                         <span className="text-muted-foreground truncate">{d.fileName}</span>
-                        <span className="text-muted-foreground">— {d.candles.length} velas</span>
+                        <span className="text-muted-foreground">
+                          — {d.candles.length} velas{trimmed ? ` (usando ${eff})` : ""}
+                        </span>
                         <button onClick={() => clearDataset(tf)} className="ml-auto text-muted-foreground hover:text-foreground">
                           <X className="w-3 h-3" />
                         </button>
@@ -536,6 +540,32 @@ function BacktestPage() {
                   })}
               </div>
             )}
+            {/* Ventana temporal (presets de últimos N meses) */}
+            <div className="pt-2 border-t border-border mt-2">
+              <div className="text-xs font-medium mb-1.5">Ventana de datos (últimos N meses)</div>
+              <div className="flex flex-wrap gap-1.5">
+                {([3, 6, 12, 24, "all"] as MonthsWindow[]).map((w) => {
+                  const active = monthsWindow === w;
+                  const label = w === "all" ? "Todo" : `${w}m`;
+                  return (
+                    <button
+                      key={String(w)}
+                      onClick={() => setMonthsWindow(w)}
+                      className={`text-xs px-2.5 py-1 rounded font-mono border ${
+                        active
+                          ? "bg-primary/20 border-primary/60 text-foreground"
+                          : "border-border hover:bg-background/50 text-muted-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1.5">
+                Recorta desde la última vela hacia atrás. Aplica a backtest, optimizador y walk-forward por igual.
+              </p>
+            </div>
             {parseErrors.length > 0 && (
               <div className="text-xs text-amber-400 space-y-0.5">
                 {parseErrors.map((e, i) => <div key={i}>{e}</div>)}
