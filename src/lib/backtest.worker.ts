@@ -150,9 +150,19 @@ self.onmessage = (e: MessageEvent<Job>) => {
       const worstHours = baseline.metrics.byHour
         .filter((h) => h.trades >= 2 && h.totalR < 0)
         .sort((a, b) => a.totalR - b.totalR)
-        .slice(0, 3)
+        .slice(0, 5)
         .map((h) => h.hour);
-      (self as unknown as Worker).postMessage({ id: job.id, done: true, worstHours });
+      const positiveHours = baseline.metrics.byHour
+        .filter((h) => h.trades >= 2 && h.totalR > 0)
+        .map((h) => h.hour);
+      // hours to EXCLUDE if we keep only positive hours = everything not in positiveHours
+      const allHours = Array.from({ length: 24 }, (_, i) => i);
+      const keepOnlyPositive = positiveHours.length > 0
+        ? allHours.filter((h) => !positiveHours.includes(h))
+        : [];
+      (self as unknown as Worker).postMessage({
+        id: job.id, done: true, worstHours, keepOnlyPositive,
+      });
     } else if (job.type === "optimize-one") {
       const r = runBacktestBars(toBars(job), {
         engineKey: job.engineKey,
@@ -163,7 +173,11 @@ self.onmessage = (e: MessageEvent<Job>) => {
       });
       const mm = r.metrics;
       const sampleWeight = Math.sqrt(Math.min(mm.trades, 100) / 100);
-      const composite = mm.trades >= 10 ? mm.expectancy * sampleWeight - 0.1 * mm.maxDrawdownR : -Infinity;
+      const pf = isFinite(mm.profitFactor) ? mm.profitFactor : 3;
+      // Objetivo: maximizar Profit Factor con muestra suficiente y drawdown controlado.
+      const composite = mm.trades >= 10
+        ? pf * sampleWeight - 0.05 * mm.maxDrawdownR
+        : -Infinity;
       (self as unknown as Worker).postMessage({
         id: job.id, done: true, row: {
           minScore: job.minScore,

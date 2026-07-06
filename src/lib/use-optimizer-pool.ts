@@ -45,8 +45,8 @@ export function useOptimizerPool() {
 
     let idc = 1;
     setProgress({ done: 0, total: 1, workers: size });
-    // 1) baseline (worst hours) on worker[0]
-    const baseline = await run<{ worstHours: number[] }>(pool[0], {
+    // 1) baseline (worst hours + keep-only-positive) on worker[0]
+    const baseline = await run<{ worstHours: number[]; keepOnlyPositive: number[] }>(pool[0], {
       type: "optimize-baseline",
       h4: params.h4, h1: params.h1, m15: params.m15, m5: params.m5, m1: params.m1,
       engineKey: params.engineKey,
@@ -56,14 +56,29 @@ export function useOptimizerPool() {
 
     // 2) build combos
     const base = (STRATEGIES[params.engineKey].defaultParams.minScore as number | undefined) ?? 70;
-    const minScores = Array.from(new Set([
-      Math.max(50, base - 15), Math.max(50, base - 10), Math.max(50, base - 5),
-      base,
-      Math.min(95, base + 5), Math.min(95, base + 10), Math.min(95, base + 15),
-    ])).sort((a, b) => a - b);
-    const variants = [[] as number[], baseline.worstHours];
+    const rawScores: number[] = [];
+    for (let d = -20; d <= 20; d += 4) {
+      const s = Math.min(95, Math.max(50, base + d));
+      rawScores.push(s);
+    }
+    const minScores = Array.from(new Set(rawScores)).sort((a, b) => a - b);
+    const wh = baseline.worstHours ?? [];
+    const variants: number[][] = [
+      [],
+      wh.slice(0, 1),
+      wh.slice(0, 2),
+      wh.slice(0, 3),
+      wh.slice(0, 5),
+    ];
+    if (baseline.keepOnlyPositive?.length) variants.push(baseline.keepOnlyPositive);
+    // dedupe variants
+    const seen = new Set<string>();
+    const uniqVariants = variants.filter((v) => {
+      const k = v.slice().sort((a, b) => a - b).join(",");
+      if (seen.has(k)) return false; seen.add(k); return true;
+    });
     const combos: Array<{ minScore: number; excludeHours: number[] }> = [];
-    for (const ms of minScores) for (const v of variants) combos.push({ minScore: ms, excludeHours: v });
+    for (const ms of minScores) for (const v of uniqVariants) combos.push({ minScore: ms, excludeHours: v });
 
     // 3) dispatch across pool
     setProgress({ done: 0, total: combos.length, workers: size });
