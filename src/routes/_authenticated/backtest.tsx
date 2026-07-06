@@ -13,7 +13,7 @@ import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { parseXauHistoricalCsv, detectTimeframeMinutes, classifyTimeframe, aggregateCandles, TF_MINUTES, type TfKey } from "@/lib/csv-parser";
 import { useBacktestWorker } from "@/lib/use-backtest-worker";
-import { useOptimizerPool } from "@/lib/use-optimizer-pool";
+import { useOptimizerPool, type OptRow } from "@/lib/use-optimizer-pool";
 import { useAiTrainer, loadModel, saveModel, deleteModel, isMlpModel, type AnyModel } from "@/lib/ai/use-trainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -537,6 +537,7 @@ function BacktestPage() {
                 </tbody>
               </table>
             </div>
+            <PfHeatmap rows={o.data.rows} onPick={(ms, hrs) => saveAndApply(o.data!.engineKey, ms, hrs)} />
             {o.isPending && pool.progress && (
               <div className="text-xs text-muted-foreground">
                 Pool de {pool.progress.workers} workers · {pool.progress.done}/{pool.progress.total} combos
@@ -910,4 +911,100 @@ function Metric({ label, value, hint }: { label: string; value: string; hint?: s
 function fmtDate(unix: number) {
   if (!unix) return "—";
   return new Date(unix * 1000).toISOString().slice(0, 10);
+}
+
+function PfHeatmap({ rows, onPick }: { rows: OptRow[]; onPick: (ms: number, hrs: number[]) => void }) {
+  if (!rows.length) return null;
+  const scoresSet = new Set<number>();
+  const variantsMap = new Map<string, number[]>();
+  for (const r of rows) {
+    scoresSet.add(r.minScore);
+    const key = r.excludeHours.slice().sort((a, b) => a - b).join(",");
+    if (!variantsMap.has(key)) variantsMap.set(key, r.excludeHours);
+  }
+  const scores = Array.from(scoresSet).sort((a, b) => a - b);
+  const variants = Array.from(variantsMap.entries()); // [key, hours[]]
+
+  const cellKey = (ms: number, key: string) => `${ms}|${key}`;
+  const cells = new Map<string, OptRow>();
+  for (const r of rows) {
+    const k = cellKey(r.minScore, r.excludeHours.slice().sort((a, b) => a - b).join(","));
+    // keep row with more trades (best-sampled) if duplicates arise
+    const cur = cells.get(k);
+    if (!cur || r.trades > cur.trades) cells.set(k, r);
+  }
+
+  const pfs = rows.map((r) => (isFinite(r.profitFactor) ? Math.min(r.profitFactor, 3) : 3));
+  const minPf = Math.min(0.5, ...pfs);
+  const maxPf = Math.max(1.5, ...pfs);
+
+  const color = (pf: number) => {
+    // 1.0 = neutral; below → red, above → green. Clamp to [minPf, maxPf].
+    const p = Math.max(minPf, Math.min(maxPf, pf));
+    if (p >= 1) {
+      const t = (p - 1) / Math.max(0.01, maxPf - 1); // 0..1
+      const alpha = 0.15 + 0.55 * t;
+      return `rgba(16, 185, 129, ${alpha.toFixed(2)})`; // emerald
+    }
+    const t = (1 - p) / Math.max(0.01, 1 - minPf);
+    const alpha = 0.15 + 0.55 * t;
+    return `rgba(239, 68, 68, ${alpha.toFixed(2)})`; // red
+  };
+
+  const labelForVariant = (hrs: number[]) => (hrs.length ? `[${hrs.join(",")}]` : "sin excl.");
+
+  return (
+    <div className="mt-4 rounded-md border border-border p-3">
+      <div className="text-xs text-muted-foreground mb-2">
+        Heatmap Profit Factor · filas = <span className="text-foreground font-mono">minScore</span> · columnas = variantes de horas excluidas.
+        Verde ≥ 1, rojo &lt; 1. Click en una celda para aplicarla como config.
+      </div>
+      <div className="overflow-x-auto">
+        <table className="text-xs border-collapse">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className="text-left px-2 py-1 sticky left-0 bg-card">minScore \ excl.</th>
+              {variants.map(([key, hrs]) => (
+                <th key={key} className="px-2 py-1 font-mono whitespace-nowrap text-center min-w-[90px]">
+                  {labelForVariant(hrs)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {scores.map((ms) => (
+              <tr key={ms}>
+                <td className="px-2 py-1 font-mono sticky left-0 bg-card">{ms}</td>
+                {variants.map(([key, hrs]) => {
+                  const r = cells.get(cellKey(ms, key));
+                  if (!r || !isFinite(r.profitFactor) || r.trades < 1) {
+                    return <td key={key} className="px-2 py-1 text-center text-muted-foreground border border-border/40">—</td>;
+                  }
+                  const pf = r.profitFactor;
+                  return (
+                    <td
+                      key={key}
+                      style={{ backgroundColor: color(pf) }}
+                      className="px-2 py-1 text-center border border-border/40 cursor-pointer hover:outline hover:outline-1 hover:outline-primary"
+                      title={`minScore=${ms} · excl=${labelForVariant(hrs)}\nPF=${pf.toFixed(2)} · trades=${r.trades} · WR=${(r.winrate * 100).toFixed(1)}% · totalR=${r.totalR.toFixed(2)}`}
+                      onClick={() => onPick(ms, hrs)}
+                    >
+                      <div className="font-mono">{pf.toFixed(2)}</div>
+                      <div className="text-[10px] text-muted-foreground">{r.trades}t</div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+        <span>PF:</span>
+        <span className="px-2 py-0.5 rounded" style={{ backgroundColor: "rgba(239,68,68,0.6)" }}>&lt; 1</span>
+        <span className="px-2 py-0.5 rounded" style={{ backgroundColor: "rgba(148,163,184,0.2)" }}>≈ 1</span>
+        <span className="px-2 py-0.5 rounded" style={{ backgroundColor: "rgba(16,185,129,0.6)" }}>&gt; 1</span>
+      </div>
+    </div>
+  );
 }
