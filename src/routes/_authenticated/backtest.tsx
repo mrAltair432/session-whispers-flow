@@ -831,10 +831,29 @@ function BacktestPage() {
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{wfError}</div>
         )}
         {wfPending && (
-          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            Walk-forward: optimizando en TRAIN (70%) y validando en TEST (30%)…
-            {pool.progress && <span className="text-muted-foreground">· <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos</span>}
+          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-start gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-primary mt-0.5" />
+            <div className="space-y-1">
+              <div>
+                Walk-forward · fase:{" "}
+                <span className="font-mono text-primary">
+                  {wfPhase === "train" ? "1/2 Optimizando TRAIN (70%)"
+                    : wfPhase === "test" ? "2/2 Backtest TEST (30%)"
+                    : "preparando"}
+                </span>
+                {" · "}<span className="font-mono">{formatElapsed(Date.now() - wfPhaseStartedAt)}</span>
+              </div>
+              {wfPhase === "train" && pool.progress && (
+                <div className="text-xs text-muted-foreground">
+                  Pool <span className="font-mono">{pool.progress.workers}</span> workers · combos <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span>
+                </div>
+              )}
+              {wfPhase === "test" && worker.progress && (
+                <div className="text-xs text-muted-foreground">
+                  {formatWorkerProgress(worker.progress)}
+                </div>
+              )}
+            </div>
           </div>
         )}
         {wfResult && !wfPending && (
@@ -844,9 +863,27 @@ function BacktestPage() {
         {o.isPending && (
           <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            {pool.progress
-              ? <>Optimizando en paralelo · <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos · <span className="font-mono">{pool.progress.workers} workers</span></>
-              : "Optimizando..."}
+            {pool.progress ? (
+              <span>
+                Optimizando en paralelo · combos{" "}
+                <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span>
+                {" · "}<span className="font-mono">{pool.progress.workers} workers</span>
+                {" · "}<span className="font-mono">
+                  {formatElapsed(Date.now() - (pool.progress.startedAt ?? Date.now()))}
+                </span>
+                {pool.progress.done > 0 && (
+                  <>
+                    {" · ETA "}
+                    <span className="font-mono">
+                      {formatElapsed(
+                        ((Date.now() - (pool.progress.startedAt ?? Date.now())) / pool.progress.done)
+                        * (pool.progress.total - pool.progress.done),
+                      )}
+                    </span>
+                  </>
+                )}
+              </span>
+            ) : "Optimizando..."}
           </div>
         )}
 
@@ -861,13 +898,32 @@ function BacktestPage() {
         )}
 
         {m.isPending && (
-          <div className="rounded-lg border border-border bg-card p-12 text-center">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-primary" />
-            <p className="text-sm text-muted-foreground">
-              {worker.progress
-                ? `Procesando en Web Worker · ${worker.progress.label} (${worker.progress.step + 1}/${worker.progress.total})`
-                : "Procesando histórico..."}
-            </p>
+          <div className="rounded-lg border border-border bg-card p-8 text-center space-y-3">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
+            {worker.progress ? (
+              <div className="space-y-1.5">
+                <div className="text-sm">
+                  Web Worker · estrategia{" "}
+                  <span className="font-mono text-primary">
+                    {worker.progress.step + 1}/{worker.progress.total}
+                  </span>{" "}
+                  · <span className="font-mono">{worker.progress.label}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {formatWorkerProgress(worker.progress)}
+                </div>
+                {typeof worker.progress.percent === "number" && (
+                  <div className="max-w-md mx-auto h-1.5 bg-muted rounded overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${Math.round(worker.progress.percent * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Procesando histórico...</p>
+            )}
           </div>
         )}
 
