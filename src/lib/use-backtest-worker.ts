@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 
-export type WorkerProgress = { step: number; total: number; label: string };
+export type WorkerProgress = {
+  step: number;
+  total: number;
+  label: string;
+  // Extended fields for phase-aware progress
+  phase?: string;
+  percent?: number;   // 0..1 dentro de la fase
+  trades?: number;    // trades acumulados en la simulación actual
+  phaseStartedAt?: number; // Date.now() al iniciar la fase actual
+  jobStartedAt?: number;   // Date.now() al iniciar el job completo
+};
 
 export function useBacktestWorker() {
   const workerRef = useRef<Worker | null>(null);
