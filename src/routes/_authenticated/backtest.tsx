@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   runFullBacktest,
   runOptimizer,
@@ -84,6 +84,10 @@ function BacktestPage() {
     {} as Record<TfKey, CustomData | undefined>,
   );
   const [parseErrors, setParseErrors] = useState<string[]>([]);
+  const [parseInfo, setParseInfo] = useState<{ ms: number; files: number; rows: number } | null>(null);
+  // Fase de walk-forward: para mostrar en qué paso vamos ("train"/"test").
+  const [wfPhase, setWfPhase] = useState<"idle" | "train" | "test">("idle");
+  const [wfPhaseStartedAt, setWfPhaseStartedAt] = useState<number>(0);
   const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
 
   // Ventana temporal: presets de últimos N meses aplicados a TODOS los CSVs
@@ -241,8 +245,10 @@ function BacktestPage() {
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || !files.length) return;
+    const t0 = performance.now();
     const errs: string[] = [];
     const updates: Partial<Record<TfKey, CustomData>> = {};
+    let totalRows = 0;
     for (const file of Array.from(files)) {
       const text = await file.text();
       const candles = parseXauHistoricalCsv(text);
@@ -250,6 +256,7 @@ function BacktestPage() {
         errs.push(`❌ ${file.name}: 0 velas parseadas`);
         continue;
       }
+      totalRows += candles.length;
       const mins = detectTimeframeMinutes(candles);
       const tf = classifyTimeframe(mins);
       if (!tf) {
@@ -275,6 +282,7 @@ function BacktestPage() {
     }
     setDatasets((prev) => ({ ...prev, ...updates }));
     setParseErrors(errs);
+    setParseInfo({ ms: performance.now() - t0, files: files.length, rows: totalRows });
   };
 
   const clearDataset = (tf: TfKey) =>
@@ -297,6 +305,7 @@ function BacktestPage() {
   const runWalkForward = async () => {
     setWfError(null);
     setWfResult(null);
+    setWfPhase("idle");
     const strat = STRATEGIES[optimizerEngine];
     const triggerBars = datasets[strat.triggerTf]?.candles ?? [];
     if (!hasCustom || triggerBars.length < 200) {
@@ -319,6 +328,8 @@ function BacktestPage() {
       const sM5 = sliceByTime(customM5, tSplit);
       const sM1 = sliceByTime(customM1, tSplit);
       // 1) Optimizar en TRAIN
+      setWfPhase("train");
+      setWfPhaseStartedAt(Date.now());
       const optResp = await pool.optimize({
         h4: sH4.train, h1: sH1.train, m15: sM15.train,
         m5: sM5.train, m1: sM1.train,
@@ -332,6 +343,8 @@ function BacktestPage() {
       }
       const best = optResp.best;
       // 2) Backtest en TEST con combo fijado
+      setWfPhase("test");
+      setWfPhaseStartedAt(Date.now());
       const testResp = await worker.run<{ results: BacktestResult[] }>({
         type: "backtest",
         h4: sH4.test, h1: sH1.test, m15: sM15.test,
@@ -373,6 +386,7 @@ function BacktestPage() {
       setWfError(err instanceof Error ? err.message : "Error en walk-forward");
     } finally {
       setWfPending(false);
+      setWfPhase("idle");
     }
   };
 
