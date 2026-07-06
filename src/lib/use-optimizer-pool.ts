@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Candle } from "./analysis";
 import { STRATEGIES, type EngineKey } from "./strategies";
+import type { BacktestCosts } from "./backtest";
 
 export type OptRow = {
   minScore: number; excludeHours: number[]; trades: number; winrate: number; totalR: number;
@@ -24,6 +25,7 @@ export function useOptimizerPool() {
     m5?: Candle[]; m1?: Candle[];
     engineKey: EngineKey;
     excludeWeekdays: number[]; autoTimeFilters: boolean;
+    costs?: BacktestCosts;
   }): Promise<OptResp> {
     poolRef.current.forEach((w) => w.terminate());
     const hw = typeof navigator !== "undefined" ? (navigator.hardwareConcurrency || 4) : 4;
@@ -52,6 +54,7 @@ export function useOptimizerPool() {
       engineKey: params.engineKey,
       excludeWeekdays: params.excludeWeekdays,
       autoTimeFilters: params.autoTimeFilters,
+      costs: params.costs,
     }, idc++);
 
     // 2) build combos
@@ -96,6 +99,7 @@ export function useOptimizerPool() {
           excludeHours: my.excludeHours,
           excludeWeekdays: params.excludeWeekdays,
           autoTimeFilters: params.autoTimeFilters,
+          costs: params.costs,
         }, idc++);
         rows.push(resp.row);
         done++;
