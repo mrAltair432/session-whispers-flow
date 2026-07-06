@@ -54,6 +54,17 @@ function BacktestPage() {
   const [autoTimeFilters, setAutoTimeFilters] = useState(true);
   const [excludeHours, setExcludeHours] = useState<number[]>([]);
   const [excludeWeekdays, setExcludeWeekdays] = useState<number[]>([]);
+  // Simulación de costos de ejecución (oro retail). Defaults calibrados
+  // para scalping M1: spread 0.20 USD, slippage 0.05 USD por lado,
+  // sin comisión, latencia 1 barra (60s señal→fill).
+  const [costsEnabled, setCostsEnabled] = useState(true);
+  const [spreadUsd, setSpreadUsd] = useState(0.20);
+  const [slippageUsd, setSlippageUsd] = useState(0.05);
+  const [commissionUsd, setCommissionUsd] = useState(0);
+  const [latencyBars, setLatencyBars] = useState(1);
+  const costsPayload = costsEnabled
+    ? { spreadUsd, slippageUsd, commissionUsd, latencyBars }
+    : { spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0 };
   const [datasets, setDatasets] = useState<Record<TfKey, CustomData | undefined>>(
     {} as Record<TfKey, CustomData | undefined>,
   );
@@ -111,6 +122,7 @@ function BacktestPage() {
           excludeHours,
           excludeWeekdays,
           autoTimeFilters,
+          costs: costsPayload,
         });
         const refTf = customM1?.length ? customM1 : (customM15 ?? customH1 ?? customH4 ?? []);
         return {
@@ -157,6 +169,7 @@ function BacktestPage() {
           engineKey: optimizerEngine,
           excludeWeekdays,
           autoTimeFilters,
+          costs: costsPayload,
         });
         return { rows: resp.rows, best: resp.best, error: null, engineKey: optimizerEngine };
       }
