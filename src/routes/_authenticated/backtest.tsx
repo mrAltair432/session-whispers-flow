@@ -366,6 +366,10 @@ function BacktestPage() {
               {o.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Wand2 className="w-4 h-4 mr-1" />}
               {o.isPending ? "Optimizando..." : `Optimizar ${STRATEGIES[optimizerEngine].shortName}`}
             </Button>
+            <Button onClick={runWalkForward} disabled={wfPending || o.isPending} size="sm" variant="outline">
+              {wfPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Split className="w-4 h-4 mr-1" />}
+              {wfPending ? "Walk-forward..." : "Walk-forward 70/30"}
+            </Button>
           </div>
         </div>
       </header>
