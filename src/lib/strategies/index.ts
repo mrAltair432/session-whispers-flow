@@ -75,16 +75,16 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
   },
   gold_scalping: {
     key: "gold_scalping",
-    name: "Gold Scalping NY Open (Judas Swing)",
-    shortName: "E4 · Gold Scalping",
+    name: "VWAP Mean Reversion Oro (M1)",
+    shortName: "E4 · VWAP Reversion",
     description:
-      "Scalping M1 en la apertura de NY (UTC 13-15). Barrido del rango de Londres + retorno al VWAP de sesión. Sesgo con EMAs M5. SL corto (0.5×ATR), TP1 en VWAP, TP2 extensión.",
-    defaultParams: { minScore: 60 },
-    killzoneHoursUTC: [13, 14, 15],
+      "Scalping M1 de reversión al VWAP diario. Entra cuando el precio se estira ≥1.5σ y aparece vela de rechazo. Sin killzone (solo excluye 22–05 UTC y fines de semana). TP1 en VWAP, TP2 banda opuesta.",
+    defaultParams: { minScore: 65 },
+    killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     triggerTf: "M1",
     requiredTfs: ["M1", "M5"],
     evaluate: (bars, params) =>
-      evaluateGoldScalping(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 60),
+      evaluateGoldScalping(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 65),
   },
 };
 
