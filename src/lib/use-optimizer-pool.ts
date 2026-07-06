@@ -8,7 +8,7 @@ export type OptRow = {
   expectancy: number; profitFactor: number; maxDrawdownR: number; sharpe: number; score: number;
 };
 export type OptResp = { rows: OptRow[]; best: OptRow | null; engineKey: EngineKey };
-export type PoolProgress = { done: number; total: number; workers: number };
+export type PoolProgress = { done: number; total: number; workers: number; startedAt: number };
 
 function spawnWorker() {
   return new Worker(new URL("./backtest.worker.ts", import.meta.url), { type: "module" });
@@ -46,7 +46,8 @@ export function useOptimizerPool() {
       });
 
     let idc = 1;
-    setProgress({ done: 0, total: 1, workers: size });
+    const startedAt = Date.now();
+    setProgress({ done: 0, total: 1, workers: size, startedAt });
     // 1) baseline (worst hours + keep-only-positive) on worker[0]
     const baseline = await run<{ worstHours: number[]; keepOnlyPositive: number[] }>(pool[0], {
       type: "optimize-baseline",
@@ -84,7 +85,7 @@ export function useOptimizerPool() {
     for (const ms of minScores) for (const v of uniqVariants) combos.push({ minScore: ms, excludeHours: v });
 
     // 3) dispatch across pool
-    setProgress({ done: 0, total: combos.length, workers: size });
+    setProgress({ done: 0, total: combos.length, workers: size, startedAt });
     const rows: OptRow[] = [];
     let done = 0;
     let idx = 0;
@@ -103,7 +104,7 @@ export function useOptimizerPool() {
         }, idc++);
         rows.push(resp.row);
         done++;
-        setProgress({ done, total: combos.length, workers: size });
+        setProgress({ done, total: combos.length, workers: size, startedAt });
       }
     };
     await Promise.all(pool.map(dispatchNext));

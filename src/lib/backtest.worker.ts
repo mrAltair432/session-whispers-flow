@@ -65,11 +65,19 @@ self.onmessage = (e: MessageEvent<Job>) => {
     if (job.type === "backtest") {
       const results: BacktestResult[] = [];
       const bars = toBars(job);
+      const jobStartedAt = Date.now();
       for (let i = 0; i < job.engines.length; i++) {
         const engineKey = job.engines[i];
+        const phaseStartedAt = Date.now();
         (self as unknown as Worker).postMessage({
           id: job.id,
-          progress: { step: i, total: job.engines.length, label: STRATEGIES[engineKey].shortName },
+          progress: {
+            step: i, total: job.engines.length,
+            label: STRATEGIES[engineKey].shortName,
+            phase: "simulate",
+            percent: 0, trades: 0,
+            phaseStartedAt, jobStartedAt,
+          },
         });
         results.push(
           runBacktestBars(bars, {
@@ -79,6 +87,18 @@ self.onmessage = (e: MessageEvent<Job>) => {
             excludeWeekdays: job.excludeWeekdays,
             autoTimeFilters: job.autoTimeFilters,
             costs: job.costs,
+            onProgress: (p) => {
+              (self as unknown as Worker).postMessage({
+                id: job.id,
+                progress: {
+                  step: i, total: job.engines.length,
+                  label: STRATEGIES[engineKey].shortName,
+                  phase: "simulate",
+                  percent: p.percent, trades: p.trades,
+                  phaseStartedAt, jobStartedAt,
+                },
+              });
+            },
           }),
         );
       }

@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   runFullBacktest,
   runOptimizer,
@@ -57,6 +57,12 @@ function persistSavedConfigs(cfg: Partial<Record<EngineKey, SavedConfig>>) {
 }
 
 function BacktestPage() {
+  // Tick para poder mostrar cronómetros en vivo mientras corre el worker.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, []);
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
   const allStrategies = listStrategies();
@@ -84,6 +90,10 @@ function BacktestPage() {
     {} as Record<TfKey, CustomData | undefined>,
   );
   const [parseErrors, setParseErrors] = useState<string[]>([]);
+  const [parseInfo, setParseInfo] = useState<{ ms: number; files: number; rows: number } | null>(null);
+  // Fase de walk-forward: para mostrar en qué paso vamos ("train"/"test").
+  const [wfPhase, setWfPhase] = useState<"idle" | "train" | "test">("idle");
+  const [wfPhaseStartedAt, setWfPhaseStartedAt] = useState<number>(0);
   const [savedConfigs, setSavedConfigs] = useState<Partial<Record<EngineKey, SavedConfig>>>(() => loadSavedConfigs());
 
   // Ventana temporal: presets de últimos N meses aplicados a TODOS los CSVs
@@ -241,8 +251,10 @@ function BacktestPage() {
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || !files.length) return;
+    const t0 = performance.now();
     const errs: string[] = [];
     const updates: Partial<Record<TfKey, CustomData>> = {};
+    let totalRows = 0;
     for (const file of Array.from(files)) {
       const text = await file.text();
       const candles = parseXauHistoricalCsv(text);
@@ -250,6 +262,7 @@ function BacktestPage() {
         errs.push(`❌ ${file.name}: 0 velas parseadas`);
         continue;
       }
+      totalRows += candles.length;
       const mins = detectTimeframeMinutes(candles);
       const tf = classifyTimeframe(mins);
       if (!tf) {
@@ -275,6 +288,7 @@ function BacktestPage() {
     }
     setDatasets((prev) => ({ ...prev, ...updates }));
     setParseErrors(errs);
+    setParseInfo({ ms: performance.now() - t0, files: files.length, rows: totalRows });
   };
 
   const clearDataset = (tf: TfKey) =>
@@ -297,6 +311,7 @@ function BacktestPage() {
   const runWalkForward = async () => {
     setWfError(null);
     setWfResult(null);
+    setWfPhase("idle");
     const strat = STRATEGIES[optimizerEngine];
     const triggerBars = datasets[strat.triggerTf]?.candles ?? [];
     if (!hasCustom || triggerBars.length < 200) {
@@ -319,6 +334,8 @@ function BacktestPage() {
       const sM5 = sliceByTime(customM5, tSplit);
       const sM1 = sliceByTime(customM1, tSplit);
       // 1) Optimizar en TRAIN
+      setWfPhase("train");
+      setWfPhaseStartedAt(Date.now());
       const optResp = await pool.optimize({
         h4: sH4.train, h1: sH1.train, m15: sM15.train,
         m5: sM5.train, m1: sM1.train,
@@ -332,6 +349,8 @@ function BacktestPage() {
       }
       const best = optResp.best;
       // 2) Backtest en TEST con combo fijado
+      setWfPhase("test");
+      setWfPhaseStartedAt(Date.now());
       const testResp = await worker.run<{ results: BacktestResult[] }>({
         type: "backtest",
         h4: sH4.test, h1: sH1.test, m15: sM15.test,
@@ -373,6 +392,7 @@ function BacktestPage() {
       setWfError(err instanceof Error ? err.message : "Error en walk-forward");
     } finally {
       setWfPending(false);
+      setWfPhase("idle");
     }
   };
 
@@ -569,6 +589,13 @@ function BacktestPage() {
             {parseErrors.length > 0 && (
               <div className="text-xs text-amber-400 space-y-0.5">
                 {parseErrors.map((e, i) => <div key={i}>{e}</div>)}
+              </div>
+            )}
+            {parseInfo && (
+              <div className="text-xs text-muted-foreground">
+                Parseo: <span className="font-mono">{(parseInfo.ms / 1000).toFixed(2)}s</span>
+                {" · "}<span className="font-mono">{parseInfo.rows.toLocaleString()}</span> velas
+                {" · "}<span className="font-mono">{parseInfo.files}</span> archivo(s)
               </div>
             )}
           </div>
@@ -804,10 +831,29 @@ function BacktestPage() {
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm">{wfError}</div>
         )}
         {wfPending && (
-          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
-            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            Walk-forward: optimizando en TRAIN (70%) y validando en TEST (30%)…
-            {pool.progress && <span className="text-muted-foreground">· <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos</span>}
+          <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-start gap-3">
+            <Loader2 className="w-4 h-4 animate-spin text-primary mt-0.5" />
+            <div className="space-y-1">
+              <div>
+                Walk-forward · fase:{" "}
+                <span className="font-mono text-primary">
+                  {wfPhase === "train" ? "1/2 Optimizando TRAIN (70%)"
+                    : wfPhase === "test" ? "2/2 Backtest TEST (30%)"
+                    : "preparando"}
+                </span>
+                {" · "}<span className="font-mono">{formatElapsed(Date.now() - wfPhaseStartedAt)}</span>
+              </div>
+              {wfPhase === "train" && pool.progress && (
+                <div className="text-xs text-muted-foreground">
+                  Pool <span className="font-mono">{pool.progress.workers}</span> workers · combos <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span>
+                </div>
+              )}
+              {wfPhase === "test" && worker.progress && (
+                <div className="text-xs text-muted-foreground">
+                  {formatWorkerProgress(worker.progress)}
+                </div>
+              )}
+            </div>
           </div>
         )}
         {wfResult && !wfPending && (
@@ -817,9 +863,27 @@ function BacktestPage() {
         {o.isPending && (
           <div className="rounded-lg border border-primary/30 bg-card p-4 text-sm flex items-center gap-3">
             <Loader2 className="w-4 h-4 animate-spin text-primary" />
-            {pool.progress
-              ? <>Optimizando en paralelo · <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span> combos · <span className="font-mono">{pool.progress.workers} workers</span></>
-              : "Optimizando..."}
+            {pool.progress ? (
+              <span>
+                Optimizando en paralelo · combos{" "}
+                <span className="font-mono">{pool.progress.done}/{pool.progress.total}</span>
+                {" · "}<span className="font-mono">{pool.progress.workers} workers</span>
+                {" · "}<span className="font-mono">
+                  {formatElapsed(Date.now() - (pool.progress.startedAt ?? Date.now()))}
+                </span>
+                {pool.progress.done > 0 && (
+                  <>
+                    {" · ETA "}
+                    <span className="font-mono">
+                      {formatElapsed(
+                        ((Date.now() - (pool.progress.startedAt ?? Date.now())) / pool.progress.done)
+                        * (pool.progress.total - pool.progress.done),
+                      )}
+                    </span>
+                  </>
+                )}
+              </span>
+            ) : "Optimizando..."}
           </div>
         )}
 
@@ -834,13 +898,32 @@ function BacktestPage() {
         )}
 
         {m.isPending && (
-          <div className="rounded-lg border border-border bg-card p-12 text-center">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto mb-3 text-primary" />
-            <p className="text-sm text-muted-foreground">
-              {worker.progress
-                ? `Procesando en Web Worker · ${worker.progress.label} (${worker.progress.step + 1}/${worker.progress.total})`
-                : "Procesando histórico..."}
-            </p>
+          <div className="rounded-lg border border-border bg-card p-8 text-center space-y-3">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
+            {worker.progress ? (
+              <div className="space-y-1.5">
+                <div className="text-sm">
+                  Web Worker · estrategia{" "}
+                  <span className="font-mono text-primary">
+                    {worker.progress.step + 1}/{worker.progress.total}
+                  </span>{" "}
+                  · <span className="font-mono">{worker.progress.label}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {formatWorkerProgress(worker.progress)}
+                </div>
+                {typeof worker.progress.percent === "number" && (
+                  <div className="max-w-md mx-auto h-1.5 bg-muted rounded overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all"
+                      style={{ width: `${Math.round(worker.progress.percent * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">Procesando histórico...</p>
+            )}
           </div>
         )}
 
@@ -1369,4 +1452,34 @@ function PfHeatmap({ rows, onPick }: { rows: OptRow[]; onPick: (ms: number, hrs:
       </div>
     </div>
   );
+}
+
+// Formatea milisegundos como mm:ss (o hh:mm:ss si >1h).
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return hh > 0 ? `${hh}:${pad(mm)}:${pad(ss)}` : `${mm}:${pad(ss)}`;
+}
+
+// Renderiza los detalles de una fase de simulación del worker: barra %, trades, elapsed, ETA.
+function formatWorkerProgress(p: {
+  phase?: string; percent?: number; trades?: number;
+  phaseStartedAt?: number; jobStartedAt?: number;
+}): string {
+  const parts: string[] = [];
+  if (p.phase) parts.push(`fase: ${p.phase}`);
+  if (typeof p.percent === "number") parts.push(`${Math.round(p.percent * 100)}%`);
+  if (typeof p.trades === "number") parts.push(`${p.trades} trades`);
+  if (p.phaseStartedAt) {
+    const el = Date.now() - p.phaseStartedAt;
+    parts.push(`${formatElapsed(el)}`);
+    if (p.percent && p.percent > 0.02) {
+      const eta = (el / p.percent) * (1 - p.percent);
+      parts.push(`ETA ${formatElapsed(eta)}`);
+    }
+  }
+  return parts.join(" · ");
 }

@@ -23,6 +23,9 @@ export type BacktestOptions = {
   excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
   autoTimeFilters?: boolean; // default true: aplica filtros de horario peligroso del oro
   costs?: BacktestCosts;
+  // Reporte de progreso desde el bucle de simulación. El worker lo usa para
+  // enviar % + trades acumulados a la UI cada ~5000 barras evaluadas.
+  onProgress?: (p: { phase: "simulate"; percent: number; trades: number; bar: number; totalBars: number }) => void;
 };
 
 export type BacktestTrade = {
@@ -347,8 +350,21 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
   const auxTfs = strategy.requiredTfs.filter((tf) => tf !== triggerTf);
 
   let lastExitIdx = -Infinity;
+  const totalBars = triggerBars.length;
+  const progressStep = Math.max(2000, Math.floor(totalBars / 40));
+  let lastReport = warmup;
 
   for (let i = warmup; i < triggerBars.length - 2; i++) {
+    if (opts.onProgress && i - lastReport >= progressStep) {
+      lastReport = i;
+      opts.onProgress({
+        phase: "simulate",
+        percent: totalBars > 0 ? i / totalBars : 0,
+        trades: trades.length,
+        bar: i,
+        totalBars,
+      });
+    }
     if (i - lastExitIdx < cooldown) continue;
     const barTime = triggerBars[i].time;
     const d0 = new Date(barTime * 1000);
