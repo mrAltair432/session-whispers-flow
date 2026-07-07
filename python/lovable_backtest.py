@@ -862,7 +862,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     if XA == 0 or AB == 0 or BC == 0:
         return None
     rAB, rBC, rCD, rAD = AB / XA, BC / AB, CD / BC, AD / XA
-    tol = 0.06
+    tol = 0.10
     near = lambda v, t: abs(v - t) <= tol
     in_r = lambda v, lo, hi: lo - tol <= v <= hi + tol
     pattern = None
@@ -875,7 +875,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     h1_atr = atr(h1["high"].values, h1["low"].values, h1["close"].values, 14)
     last_atr_h1 = h1_atr[-1] or 1
     last_h1 = h1.iloc[-1]
-    if abs(last_h1["close"] - D.price) > last_atr_h1 * 0.8:
+    if abs(last_h1["close"] - D.price) > last_atr_h1 * 1.2:
         return None
     last_m15 = m15.iloc[-1]
     m15_rng = max(0.01, last_m15["high"] - last_m15["low"])
@@ -885,7 +885,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     if not (confirm_long or confirm_short):
         return None
     r = rsi(m15["close"].values, 14)[-1]
-    rsi_div = r < 40 if bias == "long" else r > 60
+    rsi_div = r < 45 if bias == "long" else r > 55
     h_utc = datetime.fromtimestamp(int(last_m15["time"]), tz=timezone.utc).hour
     in_kz = (7 <= h_utc < 11) or (12 <= h_utc < 16)
     m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
@@ -893,7 +893,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     recent = np.sort(m15_atr[-80:][m15_atr[-80:] > 0])
     median = recent[len(recent) // 2] if len(recent) else last_a
     atr_ratio = last_a / median if median > 0 else 1
-    if atr_ratio < 0.7:
+    if atr_ratio < 0.6:
         return None
     h1_e20 = ema(h1["close"].values, 20)[-1]; h1_e50 = ema(h1["close"].values, 50)[-1]
     h1_aligned = h1_e20 > h1_e50 if bias == "long" else h1_e20 < h1_e50
