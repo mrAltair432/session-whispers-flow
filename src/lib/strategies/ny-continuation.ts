@@ -64,7 +64,7 @@ export function evaluateHarmonics(
   const rCD = CD / BC;    // extensión BC (leg CD)
   const rAD = AD / XA;    // proyección total (define el tipo de patrón)
 
-  const tol = 0.06; // ±6% Carney standard
+  const tol = 0.10; // ±10% (aflojado desde 6% Carney standard para más señales)
   const near = (v: number, target: number) => Math.abs(v - target) <= tol;
   const inRange = (v: number, lo: number, hi: number) => v >= lo - tol && v <= hi + tol;
 
@@ -82,7 +82,7 @@ export function evaluateHarmonics(
   const lastAtrH1 = h1Atr[h1Atr.length - 1] || 1;
   const lastH1 = h1[h1.length - 1];
   const distToD = Math.abs(lastH1.close - D.price);
-  if (distToD > lastAtrH1 * 0.8) return null;
+  if (distToD > lastAtrH1 * 1.2) return null;
 
   // --- Confirmación M15 (vela de reversión + RSI divergencia) ---
   const lastM15 = m15[m15.length - 1];
@@ -94,7 +94,7 @@ export function evaluateHarmonics(
 
   const m15Rsi = rsi(m15, 14);
   const lastRsi = m15Rsi[m15Rsi.length - 1];
-  const rsiDivergence = bias === "long" ? lastRsi < 40 : lastRsi > 60;
+  const rsiDivergence = bias === "long" ? lastRsi < 45 : lastRsi > 55;
 
   // --- Killzone (Londres o solape NY) ---
   const hUTC = new Date(lastM15.time * 1000).getUTCHours();
@@ -106,7 +106,7 @@ export function evaluateHarmonics(
   const recent = m15Atr.slice(-80).filter((v) => v > 0).sort((a, b) => a - b);
   const median = recent.length ? recent[Math.floor(recent.length / 2)] : lastAtr;
   const atrRatio = median > 0 ? lastAtr / median : 1;
-  if (atrRatio < 0.7) return null;
+  if (atrRatio < 0.6) return null;
 
   // --- H1 EMA alignment (extra confluencia) ---
   const h1Closes = h1.map((c) => c.close);
