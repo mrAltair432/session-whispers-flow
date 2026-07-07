@@ -1,6 +1,6 @@
 import type { Candle } from "../analysis";
 import { generateSignal as smcGenerate, type Signal } from "../signal-engine";
-import { evaluateHarmonics } from "./ny-continuation";
+import { evaluateOrbSession } from "./ny-continuation";
 import { evaluateFiboScalping } from "./fibo-scalping";
 import { evaluateGoldScalping } from "./gold-scalping";
 import { evaluateEmaCrossM1 } from "./ema-cross-m1";
@@ -57,16 +57,16 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
   },
   ny_continuation: {
     key: "ny_continuation",
-    name: "Patrones Armónicos XABCD (Gartley / Bat)",
-    shortName: "E2 · Armónicos",
+    name: "ORB Sesión Londres / NY",
+    shortName: "E2 · ORB Sesión",
     description:
-      "Detecta patrones Gartley y Bat en pivotes H1 con confirmación M15 (vela rechazo + divergencia RSI) alineados al sesgo H4. Killzones Londres/NY.",
-    defaultParams: { minScore: 65 },
-    killzoneHoursUTC: [7, 8, 9, 10, 12, 13, 14, 15],
-    triggerTf: "M15",
-    requiredTfs: ["H4", "H1", "M15"],
+      "Opening Range Breakout sobre las aperturas de Londres (07:00 UTC) y NY (13:30 UTC). La primera vela M5 define el rango; se entra al primer cierre M5 que rompe el extremo con cuerpo fuerte y sesgo alineado. Basado en Zarattini et al. 2024 (SSRN 4729284).",
+    defaultParams: { minScore: 60 },
+    killzoneHoursUTC: [7, 8, 13, 14],
+    triggerTf: "M5",
+    requiredTfs: ["M5", "M15"],
     evaluate: (bars, params) =>
-      evaluateHarmonics(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], (params.minScore as number) ?? 65),
+      evaluateOrbSession(bars.M5 ?? [], bars.M15 ?? [], (params.minScore as number) ?? 60),
   },
   fibo_scalping: {
     key: "fibo_scalping",
