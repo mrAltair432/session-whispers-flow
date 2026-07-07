@@ -823,100 +823,82 @@ def evaluate_smc_london(bars: Bars, params: dict) -> dict | None:
             "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3)}
 
 
-# ---- E2: Armónicos Gartley/Bat --- port simplificado -----------------------
+# ---- E2: ORB Sesión Londres / NY -----------------------------------------
+# Opening Range Breakout de la primera vela M5 tras la apertura de sesión.
+# Ref: Zarattini et al. 2024 (SSRN 4729284). Adaptado a XAU/USD:
+#   Londres 07:00 UTC · NY 13:30 UTC.
 
 def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
-    min_score = params.get("min_score", 65)
-    h4 = bars.get("H4"); h1 = bars.get("H1"); m15 = bars.get("M15")
-    if h4 is None or h1 is None or m15 is None:
+    min_score = params.get("min_score", 60)
+    m5 = bars.get("M5"); m15 = bars.get("M15")
+    if m5 is None or m15 is None:
         return None
-    if len(h4) < 50 or len(h1) < 60 or len(m15) < 30:
+    if len(m5) < 30 or len(m15) < 30:
         return None
-    trend = detect_trend(h4)
-    if trend == "ranging":
+    last = m5.iloc[-1]
+    last_time = int(last["time"])
+    dt = datetime.fromtimestamp(last_time, tz=timezone.utc)
+    h_utc, min_utc = dt.hour, dt.minute
+    day0 = int(datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc).timestamp())
+    london_or = day0 + 7 * 3600
+    ny_or     = day0 + 13 * 3600 + 30 * 60
+    session = None; or_open_time = 0
+    if h_utc == 7 and min_utc >= 5:        session, or_open_time = "London", london_or
+    elif h_utc == 8:                        session, or_open_time = "London", london_or
+    elif h_utc == 13 and min_utc >= 35:    session, or_open_time = "NY", ny_or
+    elif h_utc == 14:                       session, or_open_time = "NY", ny_or
+    if session is None:
         return None
-    h4_bias = "long" if trend == "bullish" else "short"
-    raw = detect_swings(h1, 3)
-    if len(raw) < 6:
+    or_rows = m5[m5["time"] == or_open_time]
+    if len(or_rows) == 0:
         return None
-    alt: list[Swing] = []
-    for s in raw:
-        if not alt or alt[-1].type != s.type:
-            alt.append(s)
-        else:
-            if (s.type == "high" and s.price > alt[-1].price) or (s.type == "low" and s.price < alt[-1].price):
-                alt[-1] = s
-    if len(alt) < 5:
+    or_bar = or_rows.iloc[0]
+    or_range = max(0.01, or_bar["high"] - or_bar["low"])
+    or_body  = abs(or_bar["close"] - or_bar["open"])
+    or_body_pct = or_body / or_range
+    if or_body_pct < 0.4:
         return None
-    X, A, B, C, D = alt[-5:]
-    bullish = X.type == "high" and A.type == "low" and B.type == "high" and C.type == "low" and D.type == "low"
-    bearish = X.type == "low" and A.type == "high" and B.type == "low" and C.type == "high" and D.type == "high"
-    if not (bullish or bearish):
+    bias = "long" if or_bar["close"] > or_bar["open"] else "short"
+    if last_time == or_open_time:
         return None
-    bias = "long" if bullish else "short"
-    if bias != h4_bias:
+    rng = max(0.01, last["high"] - last["low"])
+    body = abs(last["close"] - last["open"])
+    strong_body = (body / rng) >= 0.45
+    break_long  = bias == "long"  and last["close"] > or_bar["high"] and last["close"] > last["open"] and strong_body
+    break_short = bias == "short" and last["close"] < or_bar["low"]  and last["close"] < last["open"] and strong_body
+    if not (break_long or break_short):
         return None
-    XA = abs(A.price - X.price); AB = abs(B.price - A.price)
-    BC = abs(C.price - B.price); CD = abs(D.price - C.price)
-    AD = abs(D.price - A.price)
-    if XA == 0 or AB == 0 or BC == 0:
-        return None
-    rAB, rBC, rCD, rAD = AB / XA, BC / AB, CD / BC, AD / XA
-    tol = 0.10
-    near = lambda v, t: abs(v - t) <= tol
-    in_r = lambda v, lo, hi: lo - tol <= v <= hi + tol
-    pattern = None
-    if near(rAB, 0.618) and in_r(rBC, 0.382, 0.886) and in_r(rCD, 1.13, 1.618) and near(rAD, 0.786):
-        pattern = "Gartley"
-    elif in_r(rAB, 0.382, 0.5) and in_r(rBC, 0.382, 0.886) and in_r(rCD, 1.618, 2.618) and near(rAD, 0.886):
-        pattern = "Bat"
-    if not pattern:
-        return None
-    h1_atr = atr(h1["high"].values, h1["low"].values, h1["close"].values, 14)
-    last_atr_h1 = h1_atr[-1] or 1
-    last_h1 = h1.iloc[-1]
-    if abs(last_h1["close"] - D.price) > last_atr_h1 * 1.2:
-        return None
-    last_m15 = m15.iloc[-1]
-    m15_rng = max(0.01, last_m15["high"] - last_m15["low"])
-    m15_body = abs(last_m15["close"] - last_m15["open"])
-    confirm_long = bias == "long" and last_m15["close"] > last_m15["open"] and (last_m15["close"] - last_m15["low"]) / m15_rng > 0.6 and m15_body / m15_rng > 0.35
-    confirm_short = bias == "short" and last_m15["close"] < last_m15["open"] and (last_m15["high"] - last_m15["close"]) / m15_rng > 0.6 and m15_body / m15_rng > 0.35
-    if not (confirm_long or confirm_short):
-        return None
-    r = rsi(m15["close"].values, 14)[-1]
-    rsi_div = r < 45 if bias == "long" else r > 55
-    h_utc = datetime.fromtimestamp(int(last_m15["time"]), tz=timezone.utc).hour
-    in_kz = (7 <= h_utc < 11) or (12 <= h_utc < 16)
     m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
     last_a = m15_atr[-1] or 1
-    recent = np.sort(m15_atr[-80:][m15_atr[-80:] > 0])
+    arr = m15_atr[-80:]
+    recent = np.sort(arr[arr > 0])
     median = recent[len(recent) // 2] if len(recent) else last_a
     atr_ratio = last_a / median if median > 0 else 1
     if atr_ratio < 0.6:
         return None
-    h1_e20 = ema(h1["close"].values, 20)[-1]; h1_e50 = ema(h1["close"].values, 50)[-1]
-    h1_aligned = h1_e20 > h1_e50 if bias == "long" else h1_e20 < h1_e50
+    entry = float(last["close"])
+    buffer_ = last_a * 0.1
+    sl = float(or_bar["low"] - buffer_) if bias == "long" else float(or_bar["high"] + buffer_)
+    risk = abs(entry - sl)
+    if risk <= 0:
+        return None
+    tp1 = entry + risk     if bias == "long" else entry - risk
+    tp2 = entry + risk * 2 if bias == "long" else entry - risk * 2
+    tp3 = entry + risk * 3 if bias == "long" else entry - risk * 3
+    in_kz = (h_utc in (7, 8)) if session == "London" else (h_utc in (13, 14))
+    break_strength = ((last["close"] - or_bar["high"]) / rng) if bias == "long" else ((or_bar["low"] - last["close"]) / rng)
     breakdown = {
         "h4Trend": 15,
-        "h1Sweep": 22 if pattern == "Bat" else 20,
-        "m15Fvg": 15, "m15Bos": 12 if rsi_div else 4,
-        "killzone": 12 if in_kz else 0,
+        "h1Sweep": 22 if or_body_pct >= 0.6 else 18 if or_body_pct >= 0.5 else 14,
+        "m15Fvg": 15 if strong_body else 8,
+        "m15Bos": 14 if break_strength > 0.3 else 10 if break_strength > 0.15 else 6,
+        "killzone": 12 if in_kz else 4,
         "atr": 10 if atr_ratio >= 1 else 7 if atr_ratio >= 0.85 else 4,
-        "h1Alignment": 5 if h1_aligned else 0,
+        "h1Alignment": 5,
     }
     breakdown["total"] = sum(v for k, v in breakdown.items() if k != "total")
     if breakdown["total"] < min_score:
         return None
-    entry = float(last_m15["close"])
-    buffer_ = max(last_a * 0.3, m15_rng * 0.4)
-    sl = D.price - buffer_ if bias == "long" else D.price + buffer_
-    risk = abs(entry - sl)
-    if risk <= 0:
-        return None
-    tp1 = entry + risk if bias == "long" else entry - risk
-    tp2 = entry + risk * 2 if bias == "long" else entry - risk * 2
-    tp3 = entry + risk * 3 if bias == "long" else entry - risk * 3
     return {"bias": bias, "score": breakdown["total"], "scoreBreakdown": breakdown,
             "entry": _round(entry), "stopLoss": _round(sl),
             "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3)}
@@ -941,8 +923,8 @@ STRATEGIES: dict[str, StrategyEngine] = {
         "smc_london", "SMC Londres", "M15",
         ("H4", "H1", "M15"), evaluate_smc_london, {"min_score": 70}),
     "ny_continuation": StrategyEngine(
-        "ny_continuation", "Armónicos XABCD", "M15",
-        ("H4", "H1", "M15"), evaluate_ny_continuation, {"min_score": 65}),
+        "ny_continuation", "ORB Sesión Londres/NY", "M5",
+        ("M5", "M15"), evaluate_ny_continuation, {"min_score": 60}),
     "fibo_scalping": StrategyEngine(
         "fibo_scalping", "Fibo Scalping M5", "M5",
         ("H4", "H1", "M15", "M5"), evaluate_fibo_scalping, {"min_score": 65}),
