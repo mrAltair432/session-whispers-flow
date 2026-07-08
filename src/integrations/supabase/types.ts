@@ -100,6 +100,132 @@ export type Database = {
           },
         ]
       }
+      mt5_ea_tokens: {
+        Row: {
+          created_at: string
+          id: string
+          label: string | null
+          last_used_at: string | null
+          token: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          last_used_at?: string | null
+          token: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          last_used_at?: string | null
+          token?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      mt5_signals: {
+        Row: {
+          bias: string
+          break_even_at_r: number | null
+          closed_at: string | null
+          confidence: string | null
+          created_at: string
+          engine: string
+          entry: number
+          error_message: string | null
+          exit_price: number | null
+          expires_at: string
+          fill_price: number | null
+          filled_at: string | null
+          id: string
+          lot_size: number | null
+          mt5_ticket: number | null
+          pnl_usd: number | null
+          r_multiple: number | null
+          reasoning: Json
+          risk_usd: number | null
+          score: number | null
+          status: string
+          stop_loss: number
+          symbol: string
+          time_stop_minutes: number | null
+          tp1: number
+          tp2: number | null
+          tp3: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          bias: string
+          break_even_at_r?: number | null
+          closed_at?: string | null
+          confidence?: string | null
+          created_at?: string
+          engine: string
+          entry: number
+          error_message?: string | null
+          exit_price?: number | null
+          expires_at?: string
+          fill_price?: number | null
+          filled_at?: string | null
+          id?: string
+          lot_size?: number | null
+          mt5_ticket?: number | null
+          pnl_usd?: number | null
+          r_multiple?: number | null
+          reasoning?: Json
+          risk_usd?: number | null
+          score?: number | null
+          status?: string
+          stop_loss: number
+          symbol?: string
+          time_stop_minutes?: number | null
+          tp1: number
+          tp2?: number | null
+          tp3?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          bias?: string
+          break_even_at_r?: number | null
+          closed_at?: string | null
+          confidence?: string | null
+          created_at?: string
+          engine?: string
+          entry?: number
+          error_message?: string | null
+          exit_price?: number | null
+          expires_at?: string
+          fill_price?: number | null
+          filled_at?: string | null
+          id?: string
+          lot_size?: number | null
+          mt5_ticket?: number | null
+          pnl_usd?: number | null
+          r_multiple?: number | null
+          reasoning?: Json
+          risk_usd?: number | null
+          score?: number | null
+          status?: string
+          stop_loss?: number
+          symbol?: string
+          time_stop_minutes?: number | null
+          tp1?: number
+          tp2?: number | null
+          tp3?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       setups: {
         Row: {
           bias: string
