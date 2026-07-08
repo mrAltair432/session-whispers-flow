@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { STRATEGIES, listStrategies, type EngineKey } from "@/lib/strategies";
 import { aggregateCandles, type TfKey } from "@/lib/csv-parser";
 import type { Candle } from "@/lib/analysis";
+import type { Signal } from "@/lib/signal-engine";
 
 // Server-side cron: evalúa E1/E2/E3 sin necesidad de que el usuario tenga el
 // dashboard abierto. Se llama cada 15 min desde pg_cron durante horario de
@@ -118,6 +119,21 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
           .not("telegram_chat_id", "is", null);
         if (usersErr) return Response.json({ error: usersErr.message }, { status: 500 });
 
+        // --- Cargar best_params por (user, engine). Si el usuario ha subido
+        // un best_params.json desde Colab, esos parámetros sobreescriben los
+        // defaults del motor. Si no, se usan los defaults hardcoded.
+        const userIds = (users ?? []).map((u) => u.user_id);
+        const paramsByUE = new Map<string, Record<string, unknown>>();
+        if (userIds.length) {
+          const { data: sp } = await supabaseAdmin
+            .from("strategy_params")
+            .select("user_id, engine_key, params")
+            .in("user_id", userIds);
+          for (const row of sp ?? []) {
+            paramsByUE.set(`${row.user_id}:${row.engine_key}`, (row.params ?? {}) as Record<string, unknown>);
+          }
+        }
+
         // Bucket horario (para dedupe): truncar a la hora
         const bucketHour = new Date(Date.UTC(
           now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 0, 0, 0,
@@ -135,15 +151,27 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
             report.push({ engine: key, users: users?.length ?? 0, signals: 0, sent: 0 });
             continue;
           }
-          const signal = strat.evaluate(bars, strat.defaultParams);
           const usersCount = users?.length ?? 0;
-          if (!signal) {
-            report.push({ engine: key, users: usersCount, signals: 0, sent: 0 });
-            continue;
-          }
+          // Cache por combinación de params: evita recomputar la señal cuando
+          // varios usuarios comparten los mismos parámetros (caso común: nadie
+          // ha subido best_params.json → todos usan defaults).
+          const sigCache = new Map<string, Signal | null>();
+          const resolveSignal = (params: Record<string, unknown>): Signal | null => {
+            const k = JSON.stringify(params);
+            if (sigCache.has(k)) return sigCache.get(k) ?? null;
+            const s = strat.evaluate(bars, params);
+            sigCache.set(k, s ?? null);
+            return s ?? null;
+          };
 
+          let signalsCount = 0;
           let sent = 0;
           for (const u of users ?? []) {
+            const userParams = paramsByUE.get(`${u.user_id}:${key}`);
+            const mergedParams = { ...strat.defaultParams, ...(userParams ?? {}) };
+            const signal = resolveSignal(mergedParams);
+            if (!signal) continue;
+            signalsCount++;
             // Insert dedupado: (user_id, engine, bias, bucket_hour) unique
             const { data: inserted, error: insErr } = await supabaseAdmin
               .from("signal_events")
@@ -241,7 +269,7 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
                 .eq("id", inserted.id);
             }
           }
-          report.push({ engine: key, users: usersCount, signals: 1, sent });
+          report.push({ engine: key, users: usersCount, signals: signalsCount, sent });
         }
 
         return Response.json({ ok: true, bucketHour, report });
