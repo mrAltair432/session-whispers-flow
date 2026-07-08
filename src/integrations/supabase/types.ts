@@ -287,11 +287,16 @@ export type Database = {
         Row: {
           bias: string
           bucket_hour: string
+          closed_at: string | null
           confidence: string
           created_at: string
           engine: string
           entry: number
+          entry_time: string | null
+          exit_price: number | null
           id: string
+          outcome: string | null
+          r_multiple: number | null
           reasoning: Json
           score: number
           stop_loss: number
@@ -305,11 +310,16 @@ export type Database = {
         Insert: {
           bias: string
           bucket_hour: string
+          closed_at?: string | null
           confidence: string
           created_at?: string
           engine: string
           entry: number
+          entry_time?: string | null
+          exit_price?: number | null
           id?: string
+          outcome?: string | null
+          r_multiple?: number | null
           reasoning?: Json
           score: number
           stop_loss: number
@@ -323,11 +333,16 @@ export type Database = {
         Update: {
           bias?: string
           bucket_hour?: string
+          closed_at?: string | null
           confidence?: string
           created_at?: string
           engine?: string
           entry?: number
+          entry_time?: string | null
+          exit_price?: number | null
           id?: string
+          outcome?: string | null
+          r_multiple?: number | null
           reasoning?: Json
           score?: number
           stop_loss?: number
