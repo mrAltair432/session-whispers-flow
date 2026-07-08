@@ -11,9 +11,11 @@ import { SetupCard } from "@/components/SetupCard";
 import { RiskPanel } from "@/components/RiskPanel";
 import { SessionClock } from "@/components/SessionClock";
 import { Button } from "@/components/ui/button";
-import { Settings, LogOut, RefreshCw, BarChart3, AlertTriangle } from "lucide-react";
+import { Settings, LogOut, RefreshCw, BarChart3, AlertTriangle, History } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getTodayEvents, getNextEvent } from "@/lib/economic-calendar";
+import { listStrategies, STRATEGIES } from "@/lib/strategies";
+import type { Signal } from "@/lib/signal-engine";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Trading Compass" }] }),
@@ -42,6 +44,28 @@ function Dashboard() {
   const signal = useMemo(() => {
     if (!data || !data.h4.length) return null;
     return generateSignal(data.h4, data.h1, data.m15);
+  }, [data]);
+
+  // Evaluación LIVE de las 6 estrategias con multi-TF (M1..D1).
+  const strategySignals = useMemo(() => {
+    if (!data || !data.bars) return [] as Array<{ key: string; name: string; signal: Signal }>;
+    const bars = data.bars;
+    const out: Array<{ key: string; name: string; signal: Signal }> = [];
+    for (const strat of listStrategies()) {
+      // Verificar que estén los TFs requeridos con al menos 30 velas
+      const ok = strat.requiredTfs.every((tf) => (bars[tf]?.length ?? 0) >= 30);
+      if (!ok) {
+        out.push({ key: strat.key, name: strat.shortName, signal: null });
+        continue;
+      }
+      try {
+        const sig = strat.evaluate(bars, strat.defaultParams);
+        out.push({ key: strat.key, name: strat.shortName, signal: sig });
+      } catch {
+        out.push({ key: strat.key, name: strat.shortName, signal: null });
+      }
+    }
+    return out;
   }, [data]);
 
   const h4Trend = data && data.h4.length ? detectTrend(data.h4) : "ranging";
@@ -90,6 +114,7 @@ function Dashboard() {
               <RefreshCw className={`w-4 h-4 ${pricesQ.isFetching ? "animate-spin" : ""}`} />
             </Button>
             <Link to="/backtest"><Button variant="ghost" size="icon" title="Backtest"><BarChart3 className="w-4 h-4" /></Button></Link>
+            <Link to="/history"><Button variant="ghost" size="icon" title="Historial"><History className="w-4 h-4" /></Button></Link>
             <Link to="/settings"><Button variant="ghost" size="icon"><Settings className="w-4 h-4" /></Button></Link>
             <Button variant="ghost" size="icon" onClick={logout} title="Salir"><LogOut className="w-4 h-4" /></Button>
           </div>
@@ -165,6 +190,48 @@ function Dashboard() {
               riskPct={config?.risk_per_trade ?? 0.5}
               currentPrice={data?.lastPrice ?? null}
             />
+          </div>
+        </div>
+
+        {/* Estrategias en vivo (E1..E6) */}
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-sm">Estrategias en vivo · Multi-TF (M1 · M5 · M15 · H1 · H4 · D1)</h3>
+            <span className="text-xs text-muted-foreground">
+              {data?.bars ? (
+                <>M1:{data.bars.M1?.length ?? 0} · M5:{data.bars.M5?.length ?? 0} · M15:{data.bars.M15?.length ?? 0} · H1:{data.bars.H1?.length ?? 0} · H4:{data.bars.H4?.length ?? 0} · D1:{data.bars.D1?.length ?? 0}</>
+              ) : "cargando…"}
+            </span>
+          </div>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {strategySignals.map(({ key, name, signal: s }) => {
+              const strat = STRATEGIES[key as keyof typeof STRATEGIES];
+              const tfsOk = data?.bars ? strat.requiredTfs.every((tf) => (data.bars[tf]?.length ?? 0) >= 30) : false;
+              return (
+                <div key={key} className="rounded-md border border-border/70 bg-background/40 px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-medium">{name}</span>
+                    {!tfsOk ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">sin datos</span>
+                    ) : s ? (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${s.bias === "long" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+                        {s.bias.toUpperCase()} · {s.score}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">sin señal</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Necesita: {strat.requiredTfs.join(" · ")}
+                  </div>
+                  {s && (
+                    <div className="mt-1 text-[11px] font-mono tabular-nums text-muted-foreground">
+                      E {s.entry.toFixed(2)} · SL {s.stopLoss.toFixed(2)} · TP1 {s.tp1.toFixed(2)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
