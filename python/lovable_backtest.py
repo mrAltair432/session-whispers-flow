@@ -833,7 +833,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     m5 = bars.get("M5"); m15 = bars.get("M15")
     if m5 is None or m15 is None:
         return None
-    if len(m5) < 30 or len(m15) < 30:
+    if len(m5) < 30 or len(m15) < 210:
         return None
     last = m5.iloc[-1]
     last_time = int(last["time"])
@@ -859,8 +859,18 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     if or_body_pct < 0.4:
         return None
     bias = "long" if or_bar["close"] > or_bar["open"] else "short"
-    if last_time == or_open_time:
+    # Necesitamos al menos una vela intermedia (breakout previo + retest).
+    if last_time <= or_open_time + 5 * 60:
         return None
+    # --- A. Filtro de tendencia macro (EMA200 M15) ------------------------
+    ema200 = ema(m15["close"].values, 200)
+    last_ema = float(ema200[-1]) if len(ema200) else 0.0
+    if not np.isfinite(last_ema) or last_ema <= 0:
+        return None
+    last_m15_close = float(m15.iloc[-1]["close"])
+    if bias == "long"  and last_m15_close <= last_ema: return None
+    if bias == "short" and last_m15_close >= last_ema: return None
+
     rng = max(0.01, last["high"] - last["low"])
     body = abs(last["close"] - last["open"])
     strong_body = (body / rng) >= 0.45
@@ -868,6 +878,27 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     break_short = bias == "short" and last["close"] < or_bar["low"]  and last["close"] < last["open"] and strong_body
     if not (break_long or break_short):
         return None
+
+    # --- B. Retest confirmado --------------------------------------------
+    or_idx = int(m5.index[m5["time"] == or_open_time][0])
+    mid = m5.iloc[or_idx + 1 : len(m5) - 1]
+    breakout_pos = -1
+    if bias == "long":
+        mask = (mid["close"].values > or_bar["high"])
+    else:
+        mask = (mid["close"].values < or_bar["low"])
+    if mask.any():
+        breakout_pos = int(np.argmax(mask))  # primer True
+    if breakout_pos < 0:
+        return None
+    after = mid.iloc[breakout_pos + 1 :]
+    if bias == "long":
+        retested = bool((after["low"].values  <= or_bar["high"]).any())
+    else:
+        retested = bool((after["high"].values >= or_bar["low"]).any())
+    if not retested:
+        return None
+
     m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
     last_a = m15_atr[-1] or 1
     arr = m15_atr[-80:]
@@ -875,6 +906,9 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     median = recent[len(recent) // 2] if len(recent) else last_a
     atr_ratio = last_a / median if median > 0 else 1
     if atr_ratio < 0.6:
+        return None
+    or_range_ratio = or_range / median if median > 0 else 1
+    if or_range_ratio < 0.3 or or_range_ratio > 1.5:
         return None
     entry = float(last["close"])
     buffer_ = last_a * 0.1
@@ -888,12 +922,12 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     in_kz = (h_utc in (7, 8)) if session == "London" else (h_utc in (13, 14))
     break_strength = ((last["close"] - or_bar["high"]) / rng) if bias == "long" else ((or_bar["low"] - last["close"]) / rng)
     breakdown = {
-        "h4Trend": 15,
+        "h4Trend": 18,
         "h1Sweep": 22 if or_body_pct >= 0.6 else 18 if or_body_pct >= 0.5 else 14,
-        "m15Fvg": 15 if strong_body else 8,
+        "m15Fvg": 15,
         "m15Bos": 14 if break_strength > 0.3 else 10 if break_strength > 0.15 else 6,
         "killzone": 12 if in_kz else 4,
-        "atr": 10 if atr_ratio >= 1 else 7 if atr_ratio >= 0.85 else 4,
+        "atr": 10 if (0.5 <= or_range_ratio <= 1.2) else 7,
         "h1Alignment": 5,
     }
     breakdown["total"] = sum(v for k, v in breakdown.items() if k != "total")
