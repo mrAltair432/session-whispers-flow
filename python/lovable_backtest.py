@@ -324,10 +324,12 @@ def simulate_trade(
     df: pd.DataFrame, entry_idx: int, bias: str, entry: float,
     initial_sl: float, tp1: float, tp2: float, tp3: float,
     max_hold_bars: int, cost_per_side_usd: float,
+    management: dict | None = None,
 ) -> TradeSim:
     high = df["high"].values
     low = df["low"].values
     close = df["close"].values
+    open_ = df["open"].values
     time = df["time"].values
     init_risk = abs(entry - initial_sl)
     sl = initial_sl
@@ -337,6 +339,9 @@ def simulate_trade(
     remaining = 1.0
     cost_r = cost_per_side_usd / init_risk if init_risk > 0 else 0.0
     realized_r -= cost_r  # coste entrada
+    be_at_r = (management or {}).get("breakEvenAtR")
+    time_stop_bars = (management or {}).get("timeStopBars")
+    be_moved = False
 
     end = min(len(df) - 1, entry_idx + max_hold_bars)
 
@@ -349,10 +354,20 @@ def simulate_trade(
         return TradeSim(price, realized_r, outcome, int(t))
 
     for i in range(entry_idx + 1, end + 1):
+        # Time-stop (H)
+        if (not tp1_hit) and time_stop_bars and (i - entry_idx) >= time_stop_bars:
+            return close_remaining(float(open_[i]), time[i], "timeout")
+        # Break-even a N*R (I)
+        if (not tp1_hit) and (not be_moved) and be_at_r and be_at_r > 0:
+            trigger = entry + be_at_r * init_risk if bias == "long" else entry - be_at_r * init_risk
+            reached = high[i] >= trigger if bias == "long" else low[i] <= trigger
+            if reached:
+                sl = entry
+                be_moved = True
         if bias == "long":
             if low[i] <= sl:
                 if not tp1_hit:
-                    return close_remaining(sl, time[i], "sl")
+                    return close_remaining(sl, time[i], "be" if be_moved else "sl")
                 outcome = "tp2" if tp2_hit else "tp1"
                 return close_remaining(sl, time[i], outcome)
             if not tp1_hit and high[i] >= tp1:
@@ -374,7 +389,7 @@ def simulate_trade(
         else:
             if high[i] >= sl:
                 if not tp1_hit:
-                    return close_remaining(sl, time[i], "sl")
+                    return close_remaining(sl, time[i], "be" if be_moved else "sl")
                 outcome = "tp2" if tp2_hit else "tp1"
                 return close_remaining(sl, time[i], outcome)
             if not tp1_hit and low[i] <= tp1:
@@ -833,7 +848,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     m5 = bars.get("M5"); m15 = bars.get("M15")
     if m5 is None or m15 is None:
         return None
-    if len(m5) < 30 or len(m15) < 210:
+    if len(m5) < 30 or len(m15) < 220:
         return None
     last = m5.iloc[-1]
     last_time = int(last["time"])
@@ -870,6 +885,24 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     last_m15_close = float(m15.iloc[-1]["close"])
     if bias == "long"  and last_m15_close <= last_ema: return None
     if bias == "short" and last_m15_close >= last_ema: return None
+
+    # --- D. Contracción del día anterior (Crabel) ------------------------
+    daily_ranges = _daily_ranges_from_m15(m15, dt)
+    if len(daily_ranges) < 6:
+        return None
+    yesterday_range = daily_ranges[-1]
+    prior = sorted(daily_ranges[:-1])
+    median_prior = prior[len(prior) // 2]
+    if yesterday_range <= 0 or median_prior <= 0:
+        return None
+    contraction_ratio = yesterday_range / median_prior
+    if contraction_ratio > 0.9:
+        return None
+
+    # --- F. Kaufman Efficiency Ratio(20) en M15 --------------------------
+    er = _kaufman_er(m15["close"].values, 20)
+    if not (er > 0.3):
+        return None
 
     rng = max(0.01, last["high"] - last["low"])
     body = abs(last["close"] - last["open"])
@@ -928,14 +961,46 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
         "m15Bos": 14 if break_strength > 0.3 else 10 if break_strength > 0.15 else 6,
         "killzone": 12 if in_kz else 4,
         "atr": 10 if (0.5 <= or_range_ratio <= 1.2) else 7,
-        "h1Alignment": 5,
+        "h1Alignment": 5 if er > 0.5 else 3,
     }
     breakdown["total"] = sum(v for k, v in breakdown.items() if k != "total")
     if breakdown["total"] < min_score:
         return None
     return {"bias": bias, "score": breakdown["total"], "scoreBreakdown": breakdown,
             "entry": _round(entry), "stopLoss": _round(sl),
-            "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3)}
+            "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3),
+            "management": {"breakEvenAtR": 0.8, "timeStopBars": 9}}
+
+
+def _daily_ranges_from_m15(m15: pd.DataFrame, now: datetime) -> list[float]:
+    """Rangos diarios (high-low) UTC agregados desde M15. Excluye el día en curso."""
+    today_key = int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp())
+    tail = m15.iloc[-11 * 96 :] if len(m15) > 11 * 96 else m15
+    ts = tail["time"].values
+    hi = tail["high"].values
+    lo = tail["low"].values
+    day_keys = (ts // 86400) * 86400
+    ranges: dict[int, tuple[float, float]] = {}
+    for i in range(len(tail)):
+        k = int(day_keys[i])
+        if k >= today_key:
+            continue
+        cur = ranges.get(k)
+        if cur is None:
+            ranges[k] = (float(hi[i]), float(lo[i]))
+        else:
+            ranges[k] = (max(cur[0], float(hi[i])), min(cur[1], float(lo[i])))
+    keys = sorted(ranges.keys())[-11:]
+    return [ranges[k][0] - ranges[k][1] for k in keys]
+
+
+def _kaufman_er(closes: np.ndarray, period: int) -> float:
+    if len(closes) < period + 1:
+        return 0.0
+    s = closes[-period - 1 :]
+    net = abs(float(s[-1] - s[0]))
+    vol = float(np.sum(np.abs(np.diff(s))))
+    return net / vol if vol > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -1098,7 +1163,10 @@ def run_backtest_bars(
         tp1 = entry + dist if bias == "long" else entry - dist
         tp2 = entry + dist * 2 if bias == "long" else entry - dist * 2
         tp3 = entry + dist * 3 if bias == "long" else entry - dist * 3
-        sim = simulate_trade(trig, entry_idx, bias, entry, sl, tp1, tp2, tp3, max_hold, cost_per_side)
+        sim = simulate_trade(
+            trig, entry_idx, bias, entry, sl, tp1, tp2, tp3, max_hold, cost_per_side,
+            management=sig.get("management"),
+        )
         de = datetime.fromtimestamp(int(entry_bar["time"]), tz=timezone.utc)
         hour_utc = de.hour
         weekday = (de.weekday() + 1) % 7
