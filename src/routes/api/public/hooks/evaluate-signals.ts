@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { STRATEGIES, type EngineKey } from "@/lib/strategies";
+import { STRATEGIES, listStrategies, type EngineKey } from "@/lib/strategies";
+import { aggregateCandles, type TfKey } from "@/lib/csv-parser";
+import type { Candle } from "@/lib/analysis";
 
 // Server-side cron: evalúa E1/E2/E3 sin necesidad de que el usuario tenga el
 // dashboard abierto. Se llama cada 15 min desde pg_cron durante horario de
@@ -7,11 +9,13 @@ import { STRATEGIES, type EngineKey } from "@/lib/strategies";
 
 type TDValue = { datetime: string; open: string; high: string; low: string; close: string };
 
-async function fetchInterval(interval: "15min" | "1h" | "4h", apiKey: string) {
+type TDInterval = "1min" | "15min" | "1h" | "4h" | "1day";
+
+async function fetchInterval(interval: TDInterval, apiKey: string, outputsize = 200) {
   const url = new URL("https://api.twelvedata.com/time_series");
   url.searchParams.set("symbol", "XAU/USD");
   url.searchParams.set("interval", interval);
-  url.searchParams.set("outputsize", "120");
+  url.searchParams.set("outputsize", String(outputsize));
   url.searchParams.set("apikey", apiKey);
   url.searchParams.set("format", "JSON");
   url.searchParams.set("order", "ASC");
@@ -87,14 +91,18 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
           return Response.json({ ok: true, skipped: "outside-market-hours" });
         }
 
-        // Datos de precios (una sola vez para todos los usuarios)
-        let h4, h1, m15;
+        // Multi-TF: M1, M15, H1, H4, D1. M5 se agrega desde M1.
+        let bars: Partial<Record<TfKey, Candle[]>> = {};
         try {
-          [h4, h1, m15] = await Promise.all([
-            fetchInterval("4h", twelveKey),
-            fetchInterval("1h", twelveKey),
-            fetchInterval("15min", twelveKey),
+          const [m1, m15, h1, h4, d1] = await Promise.all([
+            fetchInterval("1min", twelveKey, 400).catch(() => [] as Candle[]),
+            fetchInterval("15min", twelveKey, 200),
+            fetchInterval("1h", twelveKey, 300),
+            fetchInterval("4h", twelveKey, 240),
+            fetchInterval("1day", twelveKey, 80).catch(() => [] as Candle[]),
           ]);
+          const m5 = m1.length ? aggregateCandles(m1, 5) : [];
+          bars = { M1: m1, M5: m5, M15: m15, H1: h1, H4: h4, D1: d1 };
         } catch (e) {
           return Response.json({ error: (e as Error).message }, { status: 502 });
         }
@@ -115,12 +123,19 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
           now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 0, 0, 0,
         )).toISOString();
 
-        const engines: EngineKey[] = ["smc_london", "ny_continuation", "fibo_scalping"];
+        // Todas las estrategias registradas, siempre que sus TFs requeridos
+        // estén poblados con >=30 velas.
+        const engines: EngineKey[] = listStrategies().map((s) => s.key);
         const report: Array<{ engine: string; users: number; signals: number; sent: number }> = [];
 
         for (const key of engines) {
           const strat = STRATEGIES[key];
-          const signal = strat.evaluate({ H4: h4, H1: h1, M15: m15 }, strat.defaultParams);
+          const tfsOk = strat.requiredTfs.every((tf) => (bars[tf]?.length ?? 0) >= 30);
+          if (!tfsOk) {
+            report.push({ engine: key, users: users?.length ?? 0, signals: 0, sent: 0 });
+            continue;
+          }
+          const signal = strat.evaluate(bars, strat.defaultParams);
           const usersCount = users?.length ?? 0;
           if (!signal) {
             report.push({ engine: key, users: usersCount, signals: 0, sent: 0 });
