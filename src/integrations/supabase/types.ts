@@ -132,6 +132,7 @@ export type Database = {
       }
       mt5_signals: {
         Row: {
+          auto_route: boolean
           bias: string
           break_even_at_r: number | null
           closed_at: string | null
@@ -152,6 +153,7 @@ export type Database = {
           reasoning: Json
           risk_usd: number | null
           score: number | null
+          signal_event_id: string | null
           status: string
           stop_loss: number
           symbol: string
@@ -163,6 +165,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          auto_route?: boolean
           bias: string
           break_even_at_r?: number | null
           closed_at?: string | null
@@ -183,6 +186,7 @@ export type Database = {
           reasoning?: Json
           risk_usd?: number | null
           score?: number | null
+          signal_event_id?: string | null
           status?: string
           stop_loss: number
           symbol?: string
@@ -194,6 +198,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          auto_route?: boolean
           bias?: string
           break_even_at_r?: number | null
           closed_at?: string | null
@@ -214,6 +219,7 @@ export type Database = {
           reasoning?: Json
           risk_usd?: number | null
           score?: number | null
+          signal_event_id?: string | null
           status?: string
           stop_loss?: number
           symbol?: string
@@ -224,7 +230,15 @@ export type Database = {
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "mt5_signals_signal_event_id_fkey"
+            columns: ["signal_event_id"]
+            isOneToOne: false
+            referencedRelation: "signal_events"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       setups: {
         Row: {
@@ -362,6 +376,8 @@ export type Database = {
           created_at: string
           max_daily_loss_pct: number
           max_trades_per_day: number
+          mt5_auto_route_enabled: boolean
+          mt5_min_confidence: string
           risk_per_trade: number
           telegram_chat_id: string | null
           telegram_enabled: boolean
@@ -374,6 +390,8 @@ export type Database = {
           created_at?: string
           max_daily_loss_pct?: number
           max_trades_per_day?: number
+          mt5_auto_route_enabled?: boolean
+          mt5_min_confidence?: string
           risk_per_trade?: number
           telegram_chat_id?: string | null
           telegram_enabled?: boolean
@@ -386,6 +404,8 @@ export type Database = {
           created_at?: string
           max_daily_loss_pct?: number
           max_trades_per_day?: number
+          mt5_auto_route_enabled?: boolean
+          mt5_min_confidence?: string
           risk_per_trade?: number
           telegram_chat_id?: string | null
           telegram_enabled?: boolean

@@ -95,7 +95,7 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
         // Verifica pertenencia
         const { data: sig } = await supabaseAdmin
           .from("mt5_signals")
-          .select("id, user_id, status")
+          .select("id, user_id, status, signal_event_id, entry, stop_loss, bias")
           .eq("id", parsed.data.signal_id)
           .maybeSingle();
         if (!sig || sig.user_id !== tok.user_id) return json({ error: "signal not found" }, 404);
@@ -128,6 +128,29 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
         }
 
         await supabaseAdmin.from("mt5_signals").update(patch).eq("id", sig.id);
+
+        // --- D. Reflejar el cierre nativo del EA en signal_events para que
+        // el historial / winrate del dashboard se actualice sin intervención.
+        if (parsed.data.action === "closed" && sig.signal_event_id) {
+          const rMul = parsed.data.r_multiple;
+          let outcome: "win" | "loss" | "breakeven" = "breakeven";
+          if (typeof rMul === "number") {
+            if (rMul > 0.05) outcome = "win";
+            else if (rMul < -0.05) outcome = "loss";
+          } else if (typeof parsed.data.pnl_usd === "number") {
+            outcome = parsed.data.pnl_usd > 0 ? "win" : parsed.data.pnl_usd < 0 ? "loss" : "breakeven";
+          }
+          await supabaseAdmin
+            .from("signal_events")
+            .update({
+              outcome,
+              r_multiple: rMul ?? null,
+              exit_price: parsed.data.exit_price ?? null,
+              closed_at: new Date().toISOString(),
+            })
+            .eq("id", sig.signal_event_id);
+        }
+
         return json({ ok: true });
       },
     },
