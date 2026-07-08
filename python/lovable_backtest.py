@@ -324,10 +324,12 @@ def simulate_trade(
     df: pd.DataFrame, entry_idx: int, bias: str, entry: float,
     initial_sl: float, tp1: float, tp2: float, tp3: float,
     max_hold_bars: int, cost_per_side_usd: float,
+    management: dict | None = None,
 ) -> TradeSim:
     high = df["high"].values
     low = df["low"].values
     close = df["close"].values
+    open_ = df["open"].values
     time = df["time"].values
     init_risk = abs(entry - initial_sl)
     sl = initial_sl
@@ -337,6 +339,9 @@ def simulate_trade(
     remaining = 1.0
     cost_r = cost_per_side_usd / init_risk if init_risk > 0 else 0.0
     realized_r -= cost_r  # coste entrada
+    be_at_r = (management or {}).get("breakEvenAtR")
+    time_stop_bars = (management or {}).get("timeStopBars")
+    be_moved = False
 
     end = min(len(df) - 1, entry_idx + max_hold_bars)
 
@@ -349,10 +354,20 @@ def simulate_trade(
         return TradeSim(price, realized_r, outcome, int(t))
 
     for i in range(entry_idx + 1, end + 1):
+        # Time-stop (H)
+        if (not tp1_hit) and time_stop_bars and (i - entry_idx) >= time_stop_bars:
+            return close_remaining(float(open_[i]), time[i], "timeout")
+        # Break-even a N*R (I)
+        if (not tp1_hit) and (not be_moved) and be_at_r and be_at_r > 0:
+            trigger = entry + be_at_r * init_risk if bias == "long" else entry - be_at_r * init_risk
+            reached = high[i] >= trigger if bias == "long" else low[i] <= trigger
+            if reached:
+                sl = entry
+                be_moved = True
         if bias == "long":
             if low[i] <= sl:
                 if not tp1_hit:
-                    return close_remaining(sl, time[i], "sl")
+                    return close_remaining(sl, time[i], "be" if be_moved else "sl")
                 outcome = "tp2" if tp2_hit else "tp1"
                 return close_remaining(sl, time[i], outcome)
             if not tp1_hit and high[i] >= tp1:
@@ -374,7 +389,7 @@ def simulate_trade(
         else:
             if high[i] >= sl:
                 if not tp1_hit:
-                    return close_remaining(sl, time[i], "sl")
+                    return close_remaining(sl, time[i], "be" if be_moved else "sl")
                 outcome = "tp2" if tp2_hit else "tp1"
                 return close_remaining(sl, time[i], outcome)
             if not tp1_hit and low[i] <= tp1:
@@ -1098,7 +1113,10 @@ def run_backtest_bars(
         tp1 = entry + dist if bias == "long" else entry - dist
         tp2 = entry + dist * 2 if bias == "long" else entry - dist * 2
         tp3 = entry + dist * 3 if bias == "long" else entry - dist * 3
-        sim = simulate_trade(trig, entry_idx, bias, entry, sl, tp1, tp2, tp3, max_hold, cost_per_side)
+        sim = simulate_trade(
+            trig, entry_idx, bias, entry, sl, tp1, tp2, tp3, max_hold, cost_per_side,
+            management=sig.get("management"),
+        )
         de = datetime.fromtimestamp(int(entry_bar["time"]), tz=timezone.utc)
         hour_utc = de.hour
         weekday = (de.weekday() + 1) % 7
