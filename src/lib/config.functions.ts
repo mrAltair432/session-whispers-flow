@@ -22,6 +22,8 @@ const updateSchema = z.object({
   telegram_chat_id: z.string().nullable(),
   telegram_enabled: z.boolean(),
   auto_alert_high_confidence: z.boolean(),
+  mt5_auto_route_enabled: z.boolean().optional(),
+  mt5_min_confidence: z.enum(["high", "medium"]).optional(),
 });
 
 export const updateMyConfig = createServerFn({ method: "POST" })
