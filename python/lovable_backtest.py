@@ -838,130 +838,126 @@ def evaluate_smc_london(bars: Bars, params: dict) -> dict | None:
             "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3)}
 
 
-# ---- E2: ORB Sesión Londres / NY -----------------------------------------
-# Opening Range Breakout de la primera vela M5 tras la apertura de sesión.
-# Ref: Zarattini et al. 2024 (SSRN 4729284). Adaptado a XAU/USD:
-#   Londres 07:00 UTC · NY 13:30 UTC.
+# ---- E2: Alligator + Bollinger Breakout (M15) ----------------------------
+# Réplica 1:1 de src/lib/strategies/alligator-bb.ts. Basado en el EA MQL5
+# AlligatorBB_RegimeEA_v2 del usuario. Ver ese archivo para las reglas.
 
-def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
-    min_score = params.get("min_score", 60)
-    m5 = bars.get("M5"); m15 = bars.get("M15")
-    if m5 is None or m15 is None:
+def _smma(values: np.ndarray, n: int) -> np.ndarray:
+    out = np.full(len(values), np.nan, dtype=float)
+    if len(values) < n:
+        return out
+    out[n - 1] = float(np.mean(values[:n]))
+    for i in range(n, len(values)):
+        out[i] = (out[i - 1] * (n - 1) + values[i]) / n
+    return out
+
+
+def _bollinger_at(closes: np.ndarray, idx: int, n: int, k: float):
+    if idx < n - 1:
         return None
-    if len(m5) < 30 or len(m15) < 220:
+    window = closes[idx - n + 1 : idx + 1]
+    mid = float(window.mean())
+    sd  = float(window.std(ddof=0))
+    return mid + k * sd, mid, mid - k * sd
+
+
+def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
+    min_score = params.get("min_score", 65)
+    m15 = bars.get("M15"); h1 = bars.get("H1")
+    if m15 is None or h1 is None:
         return None
-    last = m5.iloc[-1]
-    last_time = int(last["time"])
-    dt = datetime.fromtimestamp(last_time, tz=timezone.utc)
-    h_utc, min_utc = dt.hour, dt.minute
-    day0 = int(datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc).timestamp())
-    london_or = day0 + 7 * 3600
-    ny_or     = day0 + 13 * 3600 + 30 * 60
-    session = None; or_open_time = 0
-    if h_utc == 7 and min_utc >= 5:        session, or_open_time = "London", london_or
-    elif h_utc == 8:                        session, or_open_time = "London", london_or
-    elif h_utc == 13 and min_utc >= 35:    session, or_open_time = "NY", ny_or
-    elif h_utc == 14:                       session, or_open_time = "NY", ny_or
-    if session is None:
+    if len(m15) < 60 or len(h1) < 220:
         return None
-    or_rows = m5[m5["time"] == or_open_time]
-    if len(or_rows) == 0:
+
+    last = m15.iloc[-1]; prev = m15.iloc[-2]
+    dt = datetime.fromtimestamp(int(last["time"]), tz=timezone.utc)
+    h_utc = dt.hour
+    in_kz = 7 <= h_utc <= 16
+
+    # Alligator SMMA sobre precio mediano
+    median = ((m15["high"].values + m15["low"].values) / 2.0)
+    jaw_arr   = _smma(median, 13)
+    teeth_arr = _smma(median, 8)
+    lips_arr  = _smma(median, 5)
+    i = len(m15) - 1
+    if i - 9 < 0:
         return None
-    or_bar = or_rows.iloc[0]
-    or_range = max(0.01, or_bar["high"] - or_bar["low"])
-    or_body  = abs(or_bar["close"] - or_bar["open"])
-    or_body_pct = or_body / or_range
-    if or_body_pct < 0.4:
+    jaw0, jaw1     = jaw_arr[i - 8],   jaw_arr[i - 9]
+    teeth0, teeth1 = teeth_arr[i - 5], teeth_arr[i - 6]
+    lips0, lips1   = lips_arr[i - 3],  lips_arr[i - 4]
+    vals = [jaw0, jaw1, teeth0, teeth1, lips0, lips1]
+    if any((not np.isfinite(v)) for v in vals):
         return None
-    bias = "long" if or_bar["close"] > or_bar["open"] else "short"
-    # Necesitamos al menos una vela intermedia (breakout previo + retest).
-    if last_time <= or_open_time + 5 * 60:
+
+    bull = lips0 > teeth0 > jaw0 and lips1 > teeth1 > jaw1
+    bear = lips0 < teeth0 < jaw0 and lips1 < teeth1 < jaw1
+    if not (bull or bear):
         return None
-    # --- A. Filtro de tendencia macro (EMA200 M15) ------------------------
-    ema200 = ema(m15["close"].values, 200)
-    last_ema = float(ema200[-1]) if len(ema200) else 0.0
+    bias = "long" if bull else "short"
+
+    closes = m15["close"].values
+    bb0 = _bollinger_at(closes, i, 20, 2.0)
+    bb1 = _bollinger_at(closes, i - 1, 20, 2.0)
+    if bb0 is None or bb1 is None:
+        return None
+    up0, mid0, lo0 = bb0
+    up1, mid1, lo1 = bb1
+
+    rng  = max(0.01, float(last["high"] - last["low"]))
+    body = abs(float(last["close"] - last["open"]))
+    body_pct = body / rng
+    if body_pct < 0.55:
+        return None
+
+    break_up   = bias == "long"  and float(prev["close"]) <= up1 and float(last["close"]) > up0 and float(last["close"]) > float(last["open"])
+    break_down = bias == "short" and float(prev["close"]) >= lo1 and float(last["close"]) < lo0 and float(last["close"]) < float(last["open"])
+    if not (break_up or break_down):
+        return None
+
+    # H1 EMA200 macro
+    h1_ema = ema(h1["close"].values, 200)
+    last_ema = float(h1_ema[-1])
+    last_h1_close = float(h1.iloc[-1]["close"])
     if not np.isfinite(last_ema) or last_ema <= 0:
         return None
-    last_m15_close = float(m15.iloc[-1]["close"])
-    if bias == "long"  and last_m15_close <= last_ema: return None
-    if bias == "short" and last_m15_close >= last_ema: return None
-
-    # --- D. Contracción del día anterior (Crabel) ------------------------
-    daily_ranges = _daily_ranges_from_m15(m15, dt)
-    if len(daily_ranges) < 6:
-        return None
-    yesterday_range = daily_ranges[-1]
-    prior = sorted(daily_ranges[:-1])
-    median_prior = prior[len(prior) // 2]
-    if yesterday_range <= 0 or median_prior <= 0:
-        return None
-    contraction_ratio = yesterday_range / median_prior
-    if contraction_ratio > 0.9:
-        return None
-
-    # --- F. Kaufman Efficiency Ratio(20) en M15 --------------------------
-    er = _kaufman_er(m15["close"].values, 20)
-    if not (er > 0.3):
-        return None
-
-    rng = max(0.01, last["high"] - last["low"])
-    body = abs(last["close"] - last["open"])
-    strong_body = (body / rng) >= 0.45
-    break_long  = bias == "long"  and last["close"] > or_bar["high"] and last["close"] > last["open"] and strong_body
-    break_short = bias == "short" and last["close"] < or_bar["low"]  and last["close"] < last["open"] and strong_body
-    if not (break_long or break_short):
-        return None
-
-    # --- B. Retest confirmado --------------------------------------------
-    or_idx = int(m5.index[m5["time"] == or_open_time][0])
-    mid = m5.iloc[or_idx + 1 : len(m5) - 1]
-    breakout_pos = -1
-    if bias == "long":
-        mask = (mid["close"].values > or_bar["high"])
-    else:
-        mask = (mid["close"].values < or_bar["low"])
-    if mask.any():
-        breakout_pos = int(np.argmax(mask))  # primer True
-    if breakout_pos < 0:
-        return None
-    after = mid.iloc[breakout_pos + 1 :]
-    if bias == "long":
-        retested = bool((after["low"].values  <= or_bar["high"]).any())
-    else:
-        retested = bool((after["high"].values >= or_bar["low"]).any())
-    if not retested:
-        return None
+    if bias == "long"  and last_h1_close <= last_ema: return None
+    if bias == "short" and last_h1_close >= last_ema: return None
 
     m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
-    last_a = m15_atr[-1] or 1
+    last_a = float(m15_atr[-1]) if len(m15_atr) else 0.0
+    if last_a <= 0:
+        return None
     arr = m15_atr[-80:]
     recent = np.sort(arr[arr > 0])
-    median = recent[len(recent) // 2] if len(recent) else last_a
-    atr_ratio = last_a / median if median > 0 else 1
-    if atr_ratio < 0.6:
+    median80 = float(recent[len(recent) // 2]) if len(recent) else last_a
+    atr_ratio = last_a / median80 if median80 > 0 else 1.0
+    if atr_ratio < 0.6 or atr_ratio > 2.0:
         return None
-    or_range_ratio = or_range / median if median > 0 else 1
-    if or_range_ratio < 0.3 or or_range_ratio > 1.5:
+
+    bb_width_pct = (up0 - lo0) / mid0
+    if bb_width_pct < 0.004:
         return None
+
     entry = float(last["close"])
-    buffer_ = last_a * 0.1
-    sl = float(or_bar["low"] - buffer_) if bias == "long" else float(or_bar["high"] + buffer_)
+    sl = entry - 1.5 * last_a if bias == "long" else entry + 1.5 * last_a
     risk = abs(entry - sl)
     if risk <= 0:
         return None
     tp1 = entry + risk     if bias == "long" else entry - risk
     tp2 = entry + risk * 2 if bias == "long" else entry - risk * 2
     tp3 = entry + risk * 3 if bias == "long" else entry - risk * 3
-    in_kz = (h_utc in (7, 8)) if session == "London" else (h_utc in (13, 14))
-    break_strength = ((last["close"] - or_bar["high"]) / rng) if bias == "long" else ((or_bar["low"] - last["close"]) / rng)
+
+    gator_spread = abs(lips0 - jaw0) / last_a
+    break_strength = ((float(last["close"]) - up0) / rng) if bias == "long" else ((lo0 - float(last["close"])) / rng)
+
     breakdown = {
         "h4Trend": 18,
-        "h1Sweep": 22 if or_body_pct >= 0.6 else 18 if or_body_pct >= 0.5 else 14,
-        "m15Fvg": 15,
-        "m15Bos": 14 if break_strength > 0.3 else 10 if break_strength > 0.15 else 6,
+        "h1Sweep": 22 if body_pct >= 0.75 else 18 if body_pct >= 0.65 else 14,
+        "m15Fvg":  15 if gator_spread >= 1.2 else 12 if gator_spread >= 0.8 else 8,
+        "m15Bos":  14 if break_strength > 0.25 else 10 if break_strength > 0.1 else 6,
         "killzone": 12 if in_kz else 4,
-        "atr": 10 if (0.5 <= or_range_ratio <= 1.2) else 7,
-        "h1Alignment": 5 if er > 0.5 else 3,
+        "atr":     10 if (0.8 <= atr_ratio <= 1.5) else 7,
+        "h1Alignment": 5 if bb_width_pct >= 0.008 else 3,
     }
     breakdown["total"] = sum(v for k, v in breakdown.items() if k != "total")
     if breakdown["total"] < min_score:
@@ -969,38 +965,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     return {"bias": bias, "score": breakdown["total"], "scoreBreakdown": breakdown,
             "entry": _round(entry), "stopLoss": _round(sl),
             "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3),
-            "management": {"breakEvenAtR": 0.8, "timeStopBars": 9}}
-
-
-def _daily_ranges_from_m15(m15: pd.DataFrame, now: datetime) -> list[float]:
-    """Rangos diarios (high-low) UTC agregados desde M15. Excluye el día en curso."""
-    today_key = int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp())
-    tail = m15.iloc[-11 * 96 :] if len(m15) > 11 * 96 else m15
-    ts = tail["time"].values
-    hi = tail["high"].values
-    lo = tail["low"].values
-    day_keys = (ts // 86400) * 86400
-    ranges: dict[int, tuple[float, float]] = {}
-    for i in range(len(tail)):
-        k = int(day_keys[i])
-        if k >= today_key:
-            continue
-        cur = ranges.get(k)
-        if cur is None:
-            ranges[k] = (float(hi[i]), float(lo[i]))
-        else:
-            ranges[k] = (max(cur[0], float(hi[i])), min(cur[1], float(lo[i])))
-    keys = sorted(ranges.keys())[-11:]
-    return [ranges[k][0] - ranges[k][1] for k in keys]
-
-
-def _kaufman_er(closes: np.ndarray, period: int) -> float:
-    if len(closes) < period + 1:
-        return 0.0
-    s = closes[-period - 1 :]
-    net = abs(float(s[-1] - s[0]))
-    vol = float(np.sum(np.abs(np.diff(s))))
-    return net / vol if vol > 0 else 0.0
+            "management": {"breakEvenAtR": 1.0, "timeStopBars": 12}}
 
 
 # ---------------------------------------------------------------------------
@@ -1021,9 +986,9 @@ STRATEGIES: dict[str, StrategyEngine] = {
     "smc_london": StrategyEngine(
         "smc_london", "SMC Londres", "M15",
         ("H4", "H1", "M15"), evaluate_smc_london, {"min_score": 70}),
-    "ny_continuation": StrategyEngine(
-        "ny_continuation", "ORB Sesión Londres/NY", "M5",
-        ("M5", "M15"), evaluate_ny_continuation, {"min_score": 60}),
+    "alligator_bb": StrategyEngine(
+        "alligator_bb", "Alligator + BB Breakout (M15)", "M15",
+        ("M15", "H1"), evaluate_alligator_bb, {"min_score": 65}),
     "fibo_scalping": StrategyEngine(
         "fibo_scalping", "Fibo Scalping M5", "M5",
         ("H4", "H1", "M15", "M5"), evaluate_fibo_scalping, {"min_score": 65}),
