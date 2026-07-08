@@ -113,7 +113,7 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
         // Usuarios con telegram habilitado
         const { data: users, error: usersErr } = await supabaseAdmin
           .from("user_config")
-          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence")
+          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, balance, risk_per_trade")
           .eq("telegram_enabled", true)
           .not("telegram_chat_id", "is", null);
         if (usersErr) return Response.json({ error: usersErr.message }, { status: 500 });
@@ -167,6 +167,48 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
             if (insErr) {
               // Conflicto de unicidad → ya notificamos esta hora, skip
               continue;
+            }
+
+            // --- C. Puente MT5: si el usuario tiene auto-route habilitado y
+            // un token de EA registrado, encolamos la señal en mt5_signals para
+            // que el EA la ejecute en su próximo poll. Idempotente por
+            // (signal_event_id) — si ya existe, no reencola.
+            const meetsMt5 =
+              (u as { mt5_auto_route_enabled?: boolean }).mt5_auto_route_enabled &&
+              ((u as { mt5_min_confidence?: string }).mt5_min_confidence === "medium" ||
+                signal.confidence === "high");
+            if (meetsMt5) {
+              const { data: tok } = await supabaseAdmin
+                .from("mt5_ea_tokens")
+                .select("id")
+                .eq("user_id", u.user_id)
+                .maybeSingle();
+              if (tok) {
+                const bal = (u as { balance?: number }).balance ?? 1000;
+                const rp = (u as { risk_per_trade?: number }).risk_per_trade ?? 0.5;
+                const riskUsd = (bal * rp) / 100;
+                await supabaseAdmin.from("mt5_signals").insert({
+                  user_id: u.user_id,
+                  signal_event_id: inserted.id,
+                  auto_route: true,
+                  symbol: "XAUUSD",
+                  engine: key,
+                  bias: signal.bias,
+                  entry: signal.entry,
+                  stop_loss: signal.stopLoss,
+                  tp1: signal.tp1,
+                  tp2: signal.tp2 ?? null,
+                  tp3: signal.tp3 ?? null,
+                  risk_usd: riskUsd,
+                  break_even_at_r: signal.management?.breakEvenAtR ?? null,
+                  time_stop_minutes: signal.management?.timeStopBars
+                    ? signal.management.timeStopBars * 5
+                    : null,
+                  score: signal.score,
+                  confidence: signal.confidence,
+                  reasoning: signal.reasoning as never,
+                });
+              }
             }
 
             // Enviar solo si high confidence O si auto_alert está off (siempre alta)
