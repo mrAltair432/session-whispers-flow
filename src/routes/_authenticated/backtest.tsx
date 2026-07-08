@@ -70,6 +70,31 @@ function BacktestPage() {
   }, []);
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
+  const listParams = useServerFn(listMyStrategyParams);
+  const uploadParams = useServerFn(uploadBestParams);
+  const deleteParams = useServerFn(deleteStrategyParams);
+  const qc = useQueryClient();
+  const savedParamsQ = useQuery({
+    queryKey: ["strategy-params"],
+    queryFn: () => listParams(),
+  });
+  const [paramsUploadMsg, setParamsUploadMsg] = useState<string | null>(null);
+  const uploadParamsMut = useMutation({
+    mutationFn: async (file: File) => {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      return uploadParams({ data: json });
+    },
+    onSuccess: (r) => {
+      setParamsUploadMsg(`✓ ${r.upserted} estrategias guardadas${r.skipped ? ` · ${r.skipped} ignoradas` : ""}`);
+      qc.invalidateQueries({ queryKey: ["strategy-params"] });
+    },
+    onError: (e: unknown) => setParamsUploadMsg(`Error: ${e instanceof Error ? e.message : String(e)}`),
+  });
+  const deleteParamsMut = useMutation({
+    mutationFn: (engine_key: string) => deleteParams({ data: { engine_key } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["strategy-params"] }),
+  });
   const allStrategies = listStrategies();
   const worker = useBacktestWorker();
   const pool = useOptimizerPool();
