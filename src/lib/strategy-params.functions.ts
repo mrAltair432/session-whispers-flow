@@ -1,6 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { z } from "zod";
+import type { Database } from "@/integrations/supabase/types";
+type Json = Database["public"]["Tables"]["strategy_params"]["Insert"]["params"];
 
 const ENGINE_KEYS = [
   "smc_london",
@@ -46,8 +48,8 @@ export const uploadBestParams = createServerFn({ method: "POST" })
       .map(([key, v]) => ({
         user_id: context.userId,
         engine_key: key,
-        params: v.params,
-        metrics: v.metrics,
+        params: v.params as Json,
+        metrics: v.metrics as Json,
         source: "colab",
         generated_at: data.generated_at ?? null,
       }));
