@@ -4,11 +4,12 @@ import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import { getMyConfig, updateMyConfig } from "@/lib/config.functions";
 import { sendTelegramTest } from "@/lib/setups.functions";
+import { getMyEaToken, rotateMyEaToken, deleteMyEaToken } from "@/lib/mt5.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Copy, RefreshCw, Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/settings")({
@@ -30,6 +31,8 @@ function SettingsPage() {
     telegram_chat_id: "",
     telegram_enabled: false,
     auto_alert_high_confidence: true,
+    mt5_auto_route_enabled: false,
+    mt5_min_confidence: "high" as "high" | "medium",
   });
 
   useEffect(() => {
@@ -41,6 +44,8 @@ function SettingsPage() {
       telegram_chat_id: data.telegram_chat_id ?? "",
       telegram_enabled: data.telegram_enabled,
       auto_alert_high_confidence: data.auto_alert_high_confidence,
+      mt5_auto_route_enabled: (data as { mt5_auto_route_enabled?: boolean }).mt5_auto_route_enabled ?? false,
+      mt5_min_confidence: ((data as { mt5_min_confidence?: string }).mt5_min_confidence as "high" | "medium") ?? "high",
     });
   }, [data]);
 
@@ -58,6 +63,31 @@ function SettingsPage() {
     mutationFn: () => testTg(),
     onSuccess: () => toast.success("Mensaje enviado a Telegram 🚀"),
     onError: (e) => toast.error(e instanceof Error ? e.message : "Error enviando"),
+  });
+
+  // ---- MT5 EA token ----
+  const fetchEa = useServerFn(getMyEaToken);
+  const rotateEa = useServerFn(rotateMyEaToken);
+  const deleteEa = useServerFn(deleteMyEaToken);
+  const eaQ = useQuery({ queryKey: ["my-ea-token"], queryFn: () => fetchEa() });
+  const [freshToken, setFreshToken] = useState<string | null>(null);
+  const rotateM = useMutation({
+    mutationFn: () => rotateEa(),
+    onSuccess: (res: { token: string }) => {
+      setFreshToken(res.token);
+      qc.invalidateQueries({ queryKey: ["my-ea-token"] });
+      toast.success("Token generado. Cópialo ahora — no volverá a mostrarse.");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
+  });
+  const deleteM = useMutation({
+    mutationFn: () => deleteEa(),
+    onSuccess: () => {
+      setFreshToken(null);
+      qc.invalidateQueries({ queryKey: ["my-ea-token"] });
+      toast.success("Token eliminado");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
   });
 
   function save(e: React.FormEvent) {
@@ -123,6 +153,103 @@ function SettingsPage() {
               <p className="text-xs text-muted-foreground mt-2">
                 Guarda primero los cambios para que el chat_id quede registrado.
               </p>
+            </div>
+          </Section>
+
+          <Section title="MetaTrader 5 (EA puente)" subtitle="Envía automáticamente las señales del dashboard a MetaTrader 5 vía el EA LovableBridge.">
+            <Field label="Auto-enviar señales al EA" hint="Cuando esté activo, cada señal generada por el cron se encolará en MT5 para que el EA la ejecute.">
+              <Switch
+                checked={form.mt5_auto_route_enabled}
+                onCheckedChange={(v) => setForm({ ...form, mt5_auto_route_enabled: v })}
+              />
+            </Field>
+            <Field label="Confianza mínima" hint="Sólo se envían al EA las señales que igualen o superen este umbral.">
+              <select
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={form.mt5_min_confidence}
+                onChange={(e) => setForm({ ...form, mt5_min_confidence: e.target.value as "high" | "medium" })}
+              >
+                <option value="high">Solo Alta</option>
+                <option value="medium">Media o Alta</option>
+              </select>
+            </Field>
+
+            <div className="border-t border-border pt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-sm">Token del EA</Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Pega este token en el input <code>InpEaToken</code> del EA en MT5.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm"
+                    onClick={() => rotateM.mutate()}
+                    disabled={rotateM.isPending}>
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                    {eaQ.data ? "Rotar" : "Generar"}
+                  </Button>
+                  {eaQ.data && (
+                    <Button type="button" variant="ghost" size="sm"
+                      onClick={() => deleteM.mutate()}
+                      disabled={deleteM.isPending}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {freshToken && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 space-y-2">
+                  <p className="text-xs text-amber-300">
+                    ⚠️ Cópialo ahora. Por seguridad no volverá a mostrarse.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 text-xs font-mono break-all bg-background/60 rounded p-2">
+                      {freshToken}
+                    </code>
+                    <Button type="button" variant="outline" size="sm"
+                      onClick={() => {
+                        navigator.clipboard.writeText(freshToken);
+                        toast.success("Copiado");
+                      }}>
+                      <Copy className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {!freshToken && eaQ.data && (
+                <div className="text-xs text-muted-foreground rounded-md border border-border bg-background/50 p-3">
+                  <strong className="text-emerald-400">✅ Token activo.</strong>{" "}
+                  Creado: {new Date(eaQ.data.created_at).toLocaleString()}.{" "}
+                  {eaQ.data.last_used_at
+                    ? <>Último uso: <span className="font-mono">{new Date(eaQ.data.last_used_at).toLocaleString()}</span></>
+                    : <span className="text-amber-400">Aún no se ha conectado el EA.</span>}
+                </div>
+              )}
+
+              {!eaQ.data && !freshToken && (
+                <div className="text-xs text-muted-foreground rounded-md border border-border bg-background/50 p-3">
+                  No hay token todavía. Genera uno para conectar tu EA.
+                </div>
+              )}
+
+              <div className="text-xs text-muted-foreground border-t border-border pt-3 space-y-1.5">
+                <p className="font-semibold text-foreground">Pasos rápidos:</p>
+                <ol className="list-decimal ml-4 space-y-1">
+                  <li>Descarga el EA:{" "}
+                    <a href="/mt5/LovableBridge.mq5" download className="text-primary underline inline-flex items-center gap-1">
+                      <Download className="w-3 h-3" />LovableBridge.mq5
+                    </a>
+                  </li>
+                  <li>En MT5: <em>File → Open Data Folder → MQL5/Experts/</em> y pega el archivo.</li>
+                  <li>Compílalo (F7) en MetaEditor.</li>
+                  <li><em>Tools → Options → Expert Advisors → Allow WebRequest for URL</em> y añade{" "}
+                    <code className="bg-background/60 px-1 rounded">https://session-whispers-flow.lovable.app</code></li>
+                  <li>Arrastra el EA a un gráfico XAUUSD y pega el token en <code>InpEaToken</code>.</li>
+                </ol>
+              </div>
             </div>
           </Section>
 
