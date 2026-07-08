@@ -161,6 +161,7 @@ function simulateTrade(
   tp3: number,
   maxHoldBars: number,
   costPerSideUsd: number,
+  management?: { breakEvenAtR?: number; timeStopBars?: number },
 ): { exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number } {
   const initRisk = Math.abs(entry - initialSL);
   let sl = initialSL;
@@ -172,6 +173,9 @@ function simulateTrade(
   const costR = initRisk > 0 ? costPerSideUsd / initRisk : 0;
   // Coste de la entrada (una sola vez sobre la posición completa)
   realizedR -= costR;
+  const beAtR = management?.breakEvenAtR;
+  const timeStopBars = management?.timeStopBars;
+  let beMoved = false;
 
   const closeRemaining = (price: number, time: number, outcome: BacktestTrade["outcome"]) => {
     const moveR = bias === "long" ? (price - entry) / initRisk : (entry - price) / initRisk;
@@ -185,10 +189,23 @@ function simulateTrade(
   const end = Math.min(m15.length - 1, entryIdx + maxHoldBars);
   for (let i = entryIdx + 1; i <= end; i++) {
     const c = m15[i];
+    // Time-stop (H): si no ha llegado a TP1 tras N barras, cierre a mercado.
+    if (!tp1Hit && timeStopBars && (i - entryIdx) >= timeStopBars) {
+      return closeRemaining(c.open, c.time, "timeout");
+    }
+    // Break-even a N*R (I): mueve SL a entry cuando el MFE alcanza N*R.
+    if (!tp1Hit && !beMoved && beAtR && beAtR > 0) {
+      const trigger = bias === "long" ? entry + beAtR * initRisk : entry - beAtR * initRisk;
+      const reached = bias === "long" ? c.high >= trigger : c.low <= trigger;
+      if (reached) {
+        sl = entry;
+        beMoved = true;
+      }
+    }
     if (bias === "long") {
       // Check SL first (conservative)
       if (c.low <= sl) {
-        if (!tp1Hit) return closeRemaining(sl, c.time, "sl");
+        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
         // partials already realized: TP1 secured, possibly TP2
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
         return closeRemaining(sl, c.time, outcome);
@@ -214,7 +231,7 @@ function simulateTrade(
       }
     } else {
       if (c.high >= sl) {
-        if (!tp1Hit) return closeRemaining(sl, c.time, "sl");
+        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
         return closeRemaining(sl, c.time, outcome);
       }
@@ -397,7 +414,7 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const tp2 = signal.bias === "long" ? entry + dist * 2 : entry - dist * 2;
     const tp3 = signal.bias === "long" ? entry + dist * 3 : entry - dist * 3;
 
-    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd);
+    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd, signal.management);
     const de = new Date(entryBar.time * 1000);
     const hourUTC = de.getUTCHours();
     const weekday = de.getUTCDay();
