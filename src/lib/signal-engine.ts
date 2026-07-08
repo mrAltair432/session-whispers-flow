@@ -36,6 +36,13 @@ export type Signal = {
   // Si está presente, el backtest lo usa en vez del buildFeatures genérico.
   features?: number[];
   featureNames?: readonly string[];
+  // Reglas de gestión opcionales que el simulador (y el EA MT5) deben
+  // respetar además de SL/TP. Emitidas por la estrategia cuando quiere
+  // break-even temprano o cierre por tiempo.
+  management?: {
+    breakEvenAtR?: number;   // mueve SL a entry cuando r no realizado >= N*R
+    timeStopBars?: number;   // cierra a mercado tras N barras del trigger TF sin TP1
+  };
 } | null;
 
 export type EngineOptions = {
