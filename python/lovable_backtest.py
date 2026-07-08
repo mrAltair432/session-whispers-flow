@@ -848,7 +848,7 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     m5 = bars.get("M5"); m15 = bars.get("M15")
     if m5 is None or m15 is None:
         return None
-    if len(m5) < 30 or len(m15) < 210:
+    if len(m5) < 30 or len(m15) < 220:
         return None
     last = m5.iloc[-1]
     last_time = int(last["time"])
@@ -885,6 +885,24 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
     last_m15_close = float(m15.iloc[-1]["close"])
     if bias == "long"  and last_m15_close <= last_ema: return None
     if bias == "short" and last_m15_close >= last_ema: return None
+
+    # --- D. Contracción del día anterior (Crabel) ------------------------
+    daily_ranges = _daily_ranges_from_m15(m15, dt)
+    if len(daily_ranges) < 6:
+        return None
+    yesterday_range = daily_ranges[-1]
+    prior = sorted(daily_ranges[:-1])
+    median_prior = prior[len(prior) // 2]
+    if yesterday_range <= 0 or median_prior <= 0:
+        return None
+    contraction_ratio = yesterday_range / median_prior
+    if contraction_ratio > 0.9:
+        return None
+
+    # --- F. Kaufman Efficiency Ratio(20) en M15 --------------------------
+    er = _kaufman_er(m15["close"].values, 20)
+    if not (er > 0.3):
+        return None
 
     rng = max(0.01, last["high"] - last["low"])
     body = abs(last["close"] - last["open"])
@@ -943,14 +961,46 @@ def evaluate_ny_continuation(bars: Bars, params: dict) -> dict | None:
         "m15Bos": 14 if break_strength > 0.3 else 10 if break_strength > 0.15 else 6,
         "killzone": 12 if in_kz else 4,
         "atr": 10 if (0.5 <= or_range_ratio <= 1.2) else 7,
-        "h1Alignment": 5,
+        "h1Alignment": 5 if er > 0.5 else 3,
     }
     breakdown["total"] = sum(v for k, v in breakdown.items() if k != "total")
     if breakdown["total"] < min_score:
         return None
     return {"bias": bias, "score": breakdown["total"], "scoreBreakdown": breakdown,
             "entry": _round(entry), "stopLoss": _round(sl),
-            "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3)}
+            "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3),
+            "management": {"breakEvenAtR": 0.8, "timeStopBars": 9}}
+
+
+def _daily_ranges_from_m15(m15: pd.DataFrame, now: datetime) -> list[float]:
+    """Rangos diarios (high-low) UTC agregados desde M15. Excluye el día en curso."""
+    today_key = int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp())
+    tail = m15.iloc[-11 * 96 :] if len(m15) > 11 * 96 else m15
+    ts = tail["time"].values
+    hi = tail["high"].values
+    lo = tail["low"].values
+    day_keys = (ts // 86400) * 86400
+    ranges: dict[int, tuple[float, float]] = {}
+    for i in range(len(tail)):
+        k = int(day_keys[i])
+        if k >= today_key:
+            continue
+        cur = ranges.get(k)
+        if cur is None:
+            ranges[k] = (float(hi[i]), float(lo[i]))
+        else:
+            ranges[k] = (max(cur[0], float(hi[i])), min(cur[1], float(lo[i])))
+    keys = sorted(ranges.keys())[-11:]
+    return [ranges[k][0] - ranges[k][1] for k in keys]
+
+
+def _kaufman_er(closes: np.ndarray, period: int) -> float:
+    if len(closes) < period + 1:
+        return 0.0
+    s = closes[-period - 1 :]
+    net = abs(float(s[-1] - s[0]))
+    vol = float(np.sum(np.abs(np.diff(s))))
+    return net / vol if vol > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
