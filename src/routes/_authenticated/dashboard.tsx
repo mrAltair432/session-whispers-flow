@@ -4,6 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useMemo } from "react";
 import { fetchXauPrices } from "@/lib/prices.functions";
 import { getMyConfig, getDailyStats } from "@/lib/config.functions";
+import { listMyStrategyParams } from "@/lib/strategy-params.functions";
 import { generateSignal } from "@/lib/signal-engine";
 import { detectTrend } from "@/lib/analysis";
 import { PriceChart } from "@/components/PriceChart";
@@ -27,6 +28,7 @@ function Dashboard() {
   const fetchPrices = useServerFn(fetchXauPrices);
   const fetchConfig = useServerFn(getMyConfig);
   const fetchStats = useServerFn(getDailyStats);
+  const fetchStrategyParams = useServerFn(listMyStrategyParams);
 
   const pricesQ = useQuery({
     queryKey: ["xau-prices"],
@@ -36,6 +38,12 @@ function Dashboard() {
   });
   const configQ = useQuery({ queryKey: ["my-config"], queryFn: () => fetchConfig() });
   const statsQ = useQuery({ queryKey: ["daily-stats"], queryFn: () => fetchStats(), refetchInterval: 60_000 });
+  // best_params.json subido desde Colab (override sobre defaults de cada motor)
+  const strategyParamsQ = useQuery({
+    queryKey: ["strategy-params"],
+    queryFn: () => fetchStrategyParams(),
+    staleTime: 5 * 60_000,
+  });
 
   const data = pricesQ.data;
   const config = configQ.data;
@@ -50,6 +58,10 @@ function Dashboard() {
   const strategySignals = useMemo(() => {
     if (!data || !data.bars) return [] as Array<{ key: string; name: string; signal: Signal }>;
     const bars = data.bars;
+    const overrides = new Map<string, Record<string, unknown>>();
+    for (const row of strategyParamsQ.data ?? []) {
+      overrides.set(row.engine_key, (row.params ?? {}) as Record<string, unknown>);
+    }
     const out: Array<{ key: string; name: string; signal: Signal }> = [];
     for (const strat of listStrategies()) {
       // Verificar que estén los TFs requeridos con al menos 30 velas
@@ -59,14 +71,15 @@ function Dashboard() {
         continue;
       }
       try {
-        const sig = strat.evaluate(bars, strat.defaultParams);
+        const params = { ...strat.defaultParams, ...(overrides.get(strat.key) ?? {}) };
+        const sig = strat.evaluate(bars, params);
         out.push({ key: strat.key, name: strat.shortName, signal: sig });
       } catch {
         out.push({ key: strat.key, name: strat.shortName, signal: null });
       }
     }
     return out;
-  }, [data]);
+  }, [data, strategyParamsQ.data]);
 
   const h4Trend = data && data.h4.length ? detectTrend(data.h4) : "ranging";
   const h1Trend = data && data.h1.length ? detectTrend(data.h1) : "ranging";
