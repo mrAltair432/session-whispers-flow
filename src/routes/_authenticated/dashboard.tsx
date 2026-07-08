@@ -190,22 +190,19 @@ function Dashboard() {
             />
           </div>
 
-          {/* Right column */}
-          <div className="space-y-4">
+          {/* Right column: solo el setup principal, mantiene la altura del row de charts */}
+          <div>
             <SetupCard
               signal={signal}
               balance={config?.balance ?? 1000}
               riskPct={config?.risk_per_trade ?? 0.5}
               telegramEnabled={!!config?.telegram_enabled}
             />
-            <RiskPanel
-              balance={config?.balance ?? 1000}
-              riskPct={config?.risk_per_trade ?? 0.5}
-              currentPrice={data?.lastPrice ?? null}
-            />
           </div>
         </div>
 
+        {/* Fila inferior: Estrategias en vivo (izq) + Calculadora rápida (der) */}
+        <div className="grid xl:grid-cols-[1fr_380px] gap-4 items-start">
         {/* Estrategias en vivo (E1..E6) */}
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between mb-3">
@@ -246,6 +243,14 @@ function Dashboard() {
               );
             })}
           </div>
+        </div>
+
+        {/* Calculadora rápida — a la derecha de las estrategias */}
+        <RiskPanel
+          balance={config?.balance ?? 1000}
+          riskPct={config?.risk_per_trade ?? 0.5}
+          currentPrice={data?.lastPrice ?? null}
+        />
         </div>
 
         <footer className="text-center text-xs text-muted-foreground pt-6 pb-4">
