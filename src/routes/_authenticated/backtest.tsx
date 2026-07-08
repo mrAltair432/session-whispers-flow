@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import {
@@ -8,6 +8,11 @@ import {
   type BacktestPayload,
   type OptimizerPayload,
 } from "@/lib/backtest.functions";
+import {
+  listMyStrategyParams,
+  uploadBestParams,
+  deleteStrategyParams,
+} from "@/lib/strategy-params.functions";
 import type { BacktestResult } from "@/lib/backtest";
 import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
@@ -65,6 +70,31 @@ function BacktestPage() {
   }, []);
   const run = useServerFn(runFullBacktest);
   const opt = useServerFn(runOptimizer);
+  const listParams = useServerFn(listMyStrategyParams);
+  const uploadParams = useServerFn(uploadBestParams);
+  const deleteParams = useServerFn(deleteStrategyParams);
+  const qc = useQueryClient();
+  const savedParamsQ = useQuery({
+    queryKey: ["strategy-params"],
+    queryFn: () => listParams(),
+  });
+  const [paramsUploadMsg, setParamsUploadMsg] = useState<string | null>(null);
+  const uploadParamsMut = useMutation({
+    mutationFn: async (file: File) => {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      return uploadParams({ data: json });
+    },
+    onSuccess: (r) => {
+      setParamsUploadMsg(`✓ ${r.upserted} estrategias guardadas${r.skipped ? ` · ${r.skipped} ignoradas` : ""}`);
+      qc.invalidateQueries({ queryKey: ["strategy-params"] });
+    },
+    onError: (e: unknown) => setParamsUploadMsg(`Error: ${e instanceof Error ? e.message : String(e)}`),
+  });
+  const deleteParamsMut = useMutation({
+    mutationFn: (engine_key: string) => deleteParams({ data: { engine_key } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["strategy-params"] }),
+  });
   const allStrategies = listStrategies();
   const worker = useBacktestWorker();
   const pool = useOptimizerPool();
@@ -599,6 +629,70 @@ function BacktestPage() {
               </div>
             )}
           </div>
+        </section>
+
+        {/* Upload best_params.json (Colab → Dashboard) */}
+        <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Upload className="w-4 h-4" /> Cargar best_params.json (Colab)
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Sube el JSON que exporta el notebook de Colab (<code>lb.export_best_params(...)</code>).
+            Los parámetros quedan guardados por estrategia y se usan como override sobre los defaults del motor.
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) uploadParamsMut.mutate(f);
+                e.currentTarget.value = "";
+              }}
+              className="block text-xs text-muted-foreground file:mr-3 file:px-3 file:py-1.5 file:rounded file:border-0 file:bg-primary file:text-primary-foreground file:cursor-pointer"
+            />
+            {uploadParamsMut.isPending && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" /> subiendo…
+              </span>
+            )}
+            {paramsUploadMsg && (
+              <span className={`text-xs ${paramsUploadMsg.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
+                {paramsUploadMsg}
+              </span>
+            )}
+          </div>
+          {savedParamsQ.data && savedParamsQ.data.length > 0 && (
+            <div className="pt-2 border-t border-border mt-2 space-y-1">
+              <div className="text-xs font-medium mb-1">Parámetros guardados</div>
+              {savedParamsQ.data.map((row) => {
+                const strat = STRATEGIES[row.engine_key as EngineKey];
+                const name = strat ? strat.shortName : row.engine_key;
+                const p = row.params as Record<string, unknown>;
+                const m = row.metrics as Record<string, unknown>;
+                return (
+                  <div key={row.engine_key} className="flex items-start gap-2 text-xs font-mono">
+                    <span className="text-emerald-400 shrink-0">✓ {name}</span>
+                    <span className="text-muted-foreground truncate">
+                      {Object.entries(p).map(([k, v]) => `${k}=${String(v)}`).join("  ")}
+                      {typeof m.avg_r === "number" && `  · avgR=${(m.avg_r as number).toFixed(3)}`}
+                      {typeof m.trades === "number" && `  · n=${m.trades as number}`}
+                    </span>
+                    <button
+                      onClick={() => deleteParamsMut.mutate(row.engine_key)}
+                      className="ml-auto text-muted-foreground hover:text-foreground"
+                      title="Eliminar"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+              <p className="text-xs text-muted-foreground pt-1">
+                Fuente: <span className="font-mono">Colab</span>. Actualízalo cuando corras un nuevo grid/walk-forward.
+              </p>
+            </div>
+          )}
         </section>
 
         {/* Time filters */}
