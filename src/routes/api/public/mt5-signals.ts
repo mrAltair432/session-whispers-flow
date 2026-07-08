@@ -100,7 +100,17 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
           .maybeSingle();
         if (!sig || sig.user_id !== tok.user_id) return json({ error: "signal not found" }, 404);
 
-        const patch: Record<string, unknown> = {};
+        const patch: {
+          status?: string;
+          filled_at?: string;
+          closed_at?: string;
+          mt5_ticket?: number;
+          fill_price?: number;
+          exit_price?: number;
+          pnl_usd?: number;
+          r_multiple?: number;
+          error_message?: string;
+        } = {};
         if (parsed.data.action === "filled") {
           patch.status = "filled";
           patch.filled_at = new Date().toISOString();

@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedBacktestRouteImport } from './routes/_authenticated/backtest'
+import { Route as ApiPublicMt5SignalsRouteImport } from './routes/api/public/mt5-signals'
 import { Route as ApiPublicMt5FiboEaRouteImport } from './routes/api/public/mt5-fibo-ea'
 import { Route as ApiPublicMt5ExportRouteImport } from './routes/api/public/mt5-export'
 import { Route as ApiPublicHooksEvaluateSignalsRouteImport } from './routes/api/public/hooks/evaluate-signals'
@@ -48,6 +49,11 @@ const AuthenticatedBacktestRoute = AuthenticatedBacktestRouteImport.update({
   path: '/backtest',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const ApiPublicMt5SignalsRoute = ApiPublicMt5SignalsRouteImport.update({
+  id: '/api/public/mt5-signals',
+  path: '/api/public/mt5-signals',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicMt5FiboEaRoute = ApiPublicMt5FiboEaRouteImport.update({
   id: '/api/public/mt5-fibo-ea',
   path: '/api/public/mt5-fibo-ea',
@@ -73,6 +79,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
   '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
+  '/api/public/mt5-signals': typeof ApiPublicMt5SignalsRoute
   '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRoutesByTo {
@@ -83,6 +90,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
   '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
+  '/api/public/mt5-signals': typeof ApiPublicMt5SignalsRoute
   '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRoutesById {
@@ -95,6 +103,7 @@ export interface FileRoutesById {
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
   '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
+  '/api/public/mt5-signals': typeof ApiPublicMt5SignalsRoute
   '/api/public/hooks/evaluate-signals': typeof ApiPublicHooksEvaluateSignalsRoute
 }
 export interface FileRouteTypes {
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/public/mt5-export'
     | '/api/public/mt5-fibo-ea'
+    | '/api/public/mt5-signals'
     | '/api/public/hooks/evaluate-signals'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/api/public/mt5-export'
     | '/api/public/mt5-fibo-ea'
+    | '/api/public/mt5-signals'
     | '/api/public/hooks/evaluate-signals'
   id:
     | '__root__'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/_authenticated/settings'
     | '/api/public/mt5-export'
     | '/api/public/mt5-fibo-ea'
+    | '/api/public/mt5-signals'
     | '/api/public/hooks/evaluate-signals'
   fileRoutesById: FileRoutesById
 }
@@ -137,6 +149,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   ApiPublicMt5ExportRoute: typeof ApiPublicMt5ExportRoute
   ApiPublicMt5FiboEaRoute: typeof ApiPublicMt5FiboEaRoute
+  ApiPublicMt5SignalsRoute: typeof ApiPublicMt5SignalsRoute
   ApiPublicHooksEvaluateSignalsRoute: typeof ApiPublicHooksEvaluateSignalsRoute
 }
 
@@ -184,6 +197,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedBacktestRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/api/public/mt5-signals': {
+      id: '/api/public/mt5-signals'
+      path: '/api/public/mt5-signals'
+      fullPath: '/api/public/mt5-signals'
+      preLoaderRoute: typeof ApiPublicMt5SignalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/mt5-fibo-ea': {
       id: '/api/public/mt5-fibo-ea'
       path: '/api/public/mt5-fibo-ea'
@@ -229,6 +249,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   ApiPublicMt5ExportRoute: ApiPublicMt5ExportRoute,
   ApiPublicMt5FiboEaRoute: ApiPublicMt5FiboEaRoute,
+  ApiPublicMt5SignalsRoute: ApiPublicMt5SignalsRoute,
   ApiPublicHooksEvaluateSignalsRoute: ApiPublicHooksEvaluateSignalsRoute,
 }
 export const routeTree = rootRouteImport
