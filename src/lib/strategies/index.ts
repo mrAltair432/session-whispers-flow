@@ -1,6 +1,6 @@
 import type { Candle } from "../analysis";
 import { generateSignal as smcGenerate, type Signal } from "../signal-engine";
-import { evaluateOrbSession } from "./ny-continuation";
+import { evaluateAlligatorBB } from "./alligator-bb";
 import { evaluateFiboScalping } from "./fibo-scalping";
 import { evaluateGoldScalping } from "./gold-scalping";
 import { evaluateEmaCrossM1 } from "./ema-cross-m1";
@@ -9,7 +9,7 @@ import type { TfKey } from "../csv-parser";
 
 export type EngineKey =
   | "smc_london"
-  | "ny_continuation"
+  | "alligator_bb"
   | "fibo_scalping"
   | "gold_scalping"
   | "ema_cross_m1"
@@ -55,18 +55,18 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
         profile: "full", minScore: (params.minScore as number) ?? 70,
       }),
   },
-  ny_continuation: {
-    key: "ny_continuation",
-    name: "ORB Sesión Londres / NY",
-    shortName: "E2 · ORB Sesión",
+  alligator_bb: {
+    key: "alligator_bb",
+    name: "Alligator + Bollinger Breakout (M15)",
+    shortName: "E2 · Alligator BB",
     description:
-      "Opening Range Breakout sobre las aperturas de Londres (07:00 UTC) y NY (13:30 UTC). La primera vela M5 define el rango; se entra al primer cierre M5 que rompe el extremo con cuerpo fuerte y sesgo alineado. Basado en Zarattini et al. 2024 (SSRN 4729284).",
-    defaultParams: { minScore: 60 },
-    killzoneHoursUTC: [7, 8, 13, 14],
-    triggerTf: "M5",
-    requiredTfs: ["M5", "M15"],
+      "Régimen tendencial con Alligator (13/8/5, shifts 8/5/3, SMMA sobre precio mediano) + ruptura de Bollinger(20, 2σ) en M15. Requiere H1 EMA200 alineada, cuerpo ≥55% y ancho de banda sano. SL = 1.5×ATR, TPs 1R/2R/3R. Basado en el EA MQL5 AlligatorBB_RegimeEA_v2 del usuario.",
+    defaultParams: { minScore: 65 },
+    killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    triggerTf: "M15",
+    requiredTfs: ["M15", "H1"],
     evaluate: (bars, params) =>
-      evaluateOrbSession(bars.M5 ?? [], bars.M15 ?? [], (params.minScore as number) ?? 60),
+      evaluateAlligatorBB(bars.M15 ?? [], bars.H1 ?? [], (params.minScore as number) ?? 65),
   },
   fibo_scalping: {
     key: "fibo_scalping",

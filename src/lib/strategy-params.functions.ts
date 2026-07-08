@@ -6,7 +6,7 @@ type Json = Database["public"]["Tables"]["strategy_params"]["Insert"]["params"];
 
 const ENGINE_KEYS = [
   "smc_london",
-  "ny_continuation",
+  "alligator_bb",
   "fibo_scalping",
   "gold_scalping",
   "ema_cross_m1",
