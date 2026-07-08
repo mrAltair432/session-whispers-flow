@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import {
@@ -8,6 +8,11 @@ import {
   type BacktestPayload,
   type OptimizerPayload,
 } from "@/lib/backtest.functions";
+import {
+  listMyStrategyParams,
+  uploadBestParams,
+  deleteStrategyParams,
+} from "@/lib/strategy-params.functions";
 import type { BacktestResult } from "@/lib/backtest";
 import type { Candle } from "@/lib/analysis";
 import { listStrategies, STRATEGIES, type EngineKey } from "@/lib/strategies";
