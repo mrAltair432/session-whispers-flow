@@ -287,6 +287,31 @@ def load_bars(files: dict[str, str], build_missing: bool = True) -> Bars:
     return bars
 
 
+def slice_bars_last_months(bars: Bars, months: int = 4) -> Bars:
+    """Recorta todos los timeframes a los últimos `months` meses aproximados.
+
+    Útil en Colab: evita que grid/walk-forward/ML recorran 5 años completos.
+    El corte se calcula desde el timestamp máximo disponible del TF más fino.
+    """
+    if not bars:
+        return bars
+    finest_tf = min(bars.keys(), key=lambda tf: TF_MINUTES.get(tf, 10**9))
+    finest = bars[finest_tf]
+    if finest.empty:
+        return bars
+    month_seconds = 30 * 24 * 3600
+    t1 = int(finest["time"].max())
+    t0 = t1 - int(months * month_seconds)
+    out: Bars = {}
+    for tf, df in bars.items():
+        if df.empty:
+            out[tf] = df
+            continue
+        mask = df["time"] >= t0
+        out[tf] = df.loc[mask].reset_index(drop=True)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Filtros de mercado (paridad con backtest.ts::isMarketClosedOrRisky)
 # ---------------------------------------------------------------------------
@@ -1289,7 +1314,7 @@ def trades_to_df(trades: list[Trade]) -> pd.DataFrame:
 
 __all__ = [
     "TF_MINUTES", "FEATURE_NAMES", "STRATEGIES", "BacktestCosts",
-    "parse_xau_csv", "aggregate_candles", "load_bars",
+    "parse_xau_csv", "aggregate_candles", "load_bars", "slice_bars_last_months",
     "run_backtest_bars", "grid_search", "walk_forward",
     "export_best_params", "trades_to_df",
 ]
