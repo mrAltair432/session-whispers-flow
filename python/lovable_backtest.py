@@ -922,31 +922,73 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
 
     closes = m15["close"].values
     bb0 = _bollinger_at(closes, i, 20, 2.0)
-    bb1 = _bollinger_at(closes, i - 1, 20, 2.0)
-    if bb0 is None or bb1 is None:
+    if bb0 is None:
         return None
     up0, mid0, lo0 = bb0
-    up1, mid1, lo1 = bb1
 
-    rng  = max(0.01, float(last["high"] - last["low"]))
-    body = abs(float(last["close"] - last["open"]))
-    body_pct = body / rng
-    if body_pct < 0.55:
+    # [A] RETEST: buscar breakout en velas i-1..i-3
+    breakout_idx = -1
+    breakout_body = 0.0
+    breakout_range = 0.0
+    for k in range(1, 4):
+        b_idx = i - k
+        if b_idx < 21:
+            break
+        bb_b = _bollinger_at(closes, b_idx, 20, 2.0)
+        bb_bp = _bollinger_at(closes, b_idx - 1, 20, 2.0)
+        if bb_b is None or bb_bp is None:
+            continue
+        up_b, _mid_b, lo_b = bb_b
+        up_bp, _mid_bp, lo_bp = bb_bp
+        bar = m15.iloc[b_idx]
+        rng = max(0.01, float(bar["high"] - bar["low"]))
+        bod = abs(float(bar["close"] - bar["open"]))
+        body_pct = bod / rng
+        if body_pct < 0.55:
+            continue
+        # [C] Mecha contra-tendencia limitada
+        upper_wick = float(bar["high"]) - max(float(bar["open"]), float(bar["close"]))
+        lower_wick = min(float(bar["open"]), float(bar["close"])) - float(bar["low"])
+        opp_wick = upper_wick if bias == "long" else lower_wick
+        if opp_wick / rng > 0.40:
+            continue
+        prev_bar = m15.iloc[b_idx - 1]
+        broke_up   = bias == "long"  and float(prev_bar["close"]) <= up_bp and float(bar["close"]) > up_b and float(bar["close"]) > float(bar["open"])
+        broke_down = bias == "short" and float(prev_bar["close"]) >= lo_bp and float(bar["close"]) < lo_b and float(bar["close"]) < float(bar["open"])
+        if broke_up or broke_down:
+            breakout_idx = b_idx
+            breakout_body = body_pct
+            breakout_range = rng
+            break
+    if breakout_idx < 0:
         return None
 
-    break_up   = bias == "long"  and float(prev["close"]) <= up1 and float(last["close"]) > up0 and float(last["close"]) > float(last["open"])
-    break_down = bias == "short" and float(prev["close"]) >= lo1 and float(last["close"]) < lo0 and float(last["close"]) < float(last["open"])
-    if not (break_up or break_down):
+    # Retest válido en vela actual
+    if bias == "long":
+        pulled_back = (float(last["low"]) <= up0 * 1.001
+                       and float(last["close"]) > mid0
+                       and float(last["close"]) > float(prev["low"]))
+    else:
+        pulled_back = (float(last["high"]) >= lo0 * 0.999
+                       and float(last["close"]) < mid0
+                       and float(last["close"]) < float(prev["high"]))
+    if not pulled_back:
         return None
 
-    # H1 EMA200 macro
+    # [E] Macro H1 EMA200 con pendiente
     h1_ema = ema(h1["close"].values, 200)
     last_ema = float(h1_ema[-1])
+    if len(h1_ema) < 11:
+        return None
+    past_ema = float(h1_ema[-11])
     last_h1_close = float(h1.iloc[-1]["close"])
-    if not np.isfinite(last_ema) or last_ema <= 0:
+    if not np.isfinite(last_ema) or last_ema <= 0 or not np.isfinite(past_ema):
         return None
     if bias == "long"  and last_h1_close <= last_ema: return None
     if bias == "short" and last_h1_close >= last_ema: return None
+    ema_slope = (last_ema - past_ema) / past_ema
+    if bias == "long"  and ema_slope < 0.0002: return None
+    if bias == "short" and ema_slope > -0.0002: return None
 
     m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
     last_a = float(m15_atr[-1]) if len(m15_atr) else 0.0
@@ -959,12 +1001,27 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     if atr_ratio < 0.6 or atr_ratio > 2.0:
         return None
 
+    # [B] Boca del Alligator abierta con fuerza
+    gator_spread = abs(lips0 - jaw0) / last_a
+    if gator_spread < 0.9:
+        return None
+
     bb_width_pct = (up0 - lo0) / mid0
     if bb_width_pct < 0.004:
         return None
 
+    # [D] SL estructural
     entry = float(last["close"])
-    sl = entry - 1.5 * last_a if bias == "long" else entry + 1.5 * last_a
+    lookback = m15.iloc[-10:]
+    swing_low = float(lookback["low"].min())
+    swing_high = float(lookback["high"].max())
+    buffer_ = 0.3 * last_a
+    struct_sl = swing_low - buffer_ if bias == "long" else swing_high + buffer_
+    atr_cap = entry - 1.8 * last_a if bias == "long" else entry + 1.8 * last_a
+    sl = max(struct_sl, atr_cap) if bias == "long" else min(struct_sl, atr_cap)
+    min_risk = 0.6 * last_a
+    if abs(entry - sl) < min_risk:
+        sl = entry - min_risk if bias == "long" else entry + min_risk
     risk = abs(entry - sl)
     if risk <= 0:
         return None
@@ -972,14 +1029,14 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     tp2 = entry + risk * 2 if bias == "long" else entry - risk * 2
     tp3 = entry + risk * 3 if bias == "long" else entry - risk * 3
 
-    gator_spread = abs(lips0 - jaw0) / last_a
-    break_strength = ((float(last["close"]) - up0) / rng) if bias == "long" else ((lo0 - float(last["close"])) / rng)
+    rng_bo = breakout_range
+    break_strength = ((float(last["close"]) - up0) / rng_bo) if bias == "long" else ((lo0 - float(last["close"])) / rng_bo)
 
     breakdown = {
-        "h4Trend": 18,
-        "h1Sweep": 22 if body_pct >= 0.75 else 18 if body_pct >= 0.65 else 14,
-        "m15Fvg":  15 if gator_spread >= 1.2 else 12 if gator_spread >= 0.8 else 8,
-        "m15Bos":  14 if break_strength > 0.25 else 10 if break_strength > 0.1 else 6,
+        "h4Trend": 20 if (ema_slope > 0.001 or ema_slope < -0.001) else 15,
+        "h1Sweep": 22 if breakout_body >= 0.75 else 18 if breakout_body >= 0.65 else 14,
+        "m15Fvg":  15 if gator_spread >= 1.4 else 12 if gator_spread >= 1.1 else 9,
+        "m15Bos":  14 if break_strength > 0.25 else 10 if break_strength > 0.1 else 7,
         "killzone": 12 if in_kz else 4,
         "atr":     10 if (0.8 <= atr_ratio <= 1.5) else 7,
         "h1Alignment": 5 if bb_width_pct >= 0.008 else 3,
