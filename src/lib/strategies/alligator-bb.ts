@@ -150,10 +150,10 @@ export function evaluateAlligatorBB(
   const tp3 = bias === "long" ? entry + risk * 3 : entry - risk * 3;
 
   // --- Score ------------------------------------------------------------
+  const range = breakoutRange; // rango de la vela de breakout
   const breakoutStrength = bias === "long"
     ? (last.close - bb0.upper) / range
     : (bb0.lower - last.close) / range;
-  const range = breakoutRange; // usado sólo para el score info
 
   const breakdown = {
     h4Trend: emaSlope > 0.001 || emaSlope < -0.001 ? 20 : 15,           // pendiente H1
