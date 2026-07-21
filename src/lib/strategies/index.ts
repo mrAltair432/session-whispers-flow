@@ -60,13 +60,13 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     name: "Alligator + Bollinger Breakout (M15)",
     shortName: "E2 · Alligator BB",
     description:
-      "Régimen tendencial con Alligator (13/8/5, shifts 8/5/3, SMMA sobre precio mediano) + ruptura de Bollinger(20, 2σ) en M15. Requiere H1 EMA200 alineada, cuerpo ≥55% y ancho de banda sano. SL = 1.5×ATR, TPs 1R/2R/3R. Basado en el EA MQL5 AlligatorBB_RegimeEA_v2 del usuario.",
-    defaultParams: { minScore: 65 },
-    killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+      "v4: Alligator (13/8/5) + Bollinger(20,2) con TTM-Squeeze release (BB dentro de Keltner 1.5×ATR y ahora fuera), confirmación de Awesome Oscillator (Bill Williams), ADX≥22, doble EMA200 (H1+H4) con pendiente, y ventana Londres-NY overlap 12-17 UTC. Retest tras breakout, cuerpo ≥65%, mecha opuesta ≤30%. SL estructural (swing±0.3×ATR, cap 1.8×ATR). BE@0.7R, time-stop 10.",
+    defaultParams: { minScore: 70 },
+    killzoneHoursUTC: [12, 13, 14, 15, 16, 17],
     triggerTf: "M15",
-    requiredTfs: ["M15", "H1"],
+    requiredTfs: ["H4", "H1", "M15"],
     evaluate: (bars, params) =>
-      evaluateAlligatorBB(bars.M15 ?? [], bars.H1 ?? [], (params.minScore as number) ?? 65),
+      evaluateAlligatorBB(bars.M15 ?? [], bars.H1 ?? [], (params.minScore as number) ?? 70, bars.H4),
   },
   fibo_scalping: {
     key: "fibo_scalping",
