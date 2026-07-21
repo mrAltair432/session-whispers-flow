@@ -2,28 +2,21 @@ import { atr, ema, type Candle } from "../analysis";
 import type { Signal } from "../signal-engine";
 
 // ============================================================================
-// Estrategia E2 (nueva): Alligator + Bollinger Bands Breakout
+// Estrategia E2 v3: Alligator + Bollinger Breakout con RETEST (M15)
 // ----------------------------------------------------------------------------
-// Basada en el EA MQL5 `AlligatorBB_RegimeEA_v2` del usuario, con mejoras para
-// aumentar el winrate y adaptar a nuestro simulador (que no maneja órdenes
-// pendientes: siempre entramos a mercado en el cierre de la vela trigger).
+// Mejoras aplicadas sobre v2 (A+B+C+D+E) tras diagnóstico WR 41% / PF 0.97:
 //
-// Reglas:
-//   • Timeframe trigger: M15. Contexto: H1 (EMA200 macro).
-//   • Alligator SMMA sobre precio mediano (h+l)/2 con periodos/shifts clásicos
-//     de Bill Williams: jaw(13, s8), teeth(8, s5), lips(5, s3).
-//   • Bollinger(20, 2σ) sobre close en M15.
-//   • Régimen tendencial: lips > teeth > jaw (bull) o lips < teeth < jaw (bear)
-//     en la vela actual Y en la anterior — evita entradas con "boca abierta"
-//     naciente inestable.
-//   • Trigger: cierre cruza banda superior (bull) o inferior (bear) desde el
-//     lado interno de la vela previa. Cuerpo ≥ 55 % del rango de la vela.
-//   • Filtros anti-basura:
-//       - H1 EMA200 alineado con el bias (macro trend).
-//       - ATR M15 dentro de rango sano (0.6×–2× mediana de 80 barras).
-//       - Ancho de banda relativo ≥ 0.4 % del precio (evita squeeze breakouts).
-//   • Salidas: SL = 1.5×ATR(M15) desde entry. TP1/TP2/TP3 = 1R/2R/3R.
-//   • Management: BE tras TP1 (lo hace el motor) + time-stop 12 velas M15 (~3h).
+//   [A] RETEST ENTRY: el breakout debe ocurrir 1-3 velas ATRÁS y la vela
+//       actual es un pullback que respeta la banda (no compramos el pico).
+//   [B] BOCA ABIERTA FUERTE: gatorSpread >= 0.9×ATR (antes bastaba el orden).
+//   [C] MECHA CONTRA-TENDENCIA LIMITADA: mecha opuesta ≤ 40% del rango en
+//       la vela de breakout (rechaza velas de clímax con reversión).
+//   [D] SL ESTRUCTURAL: mín/máx de las últimas 10 velas M15 + buffer 0.3×ATR,
+//       con techo 1.8×ATR para no arriesgar demasiado en breakouts anchos.
+//   [E] H1 EMA200 CON PENDIENTE: no basta con precio arriba/abajo, la EMA
+//       debe estar subiendo (long) o bajando (short) las últimas 10 velas H1.
+//
+// Timeframes: trigger M15 · contexto H1. TPs 1R/2R/3R. BE @ 1R + timestop 12.
 // ============================================================================
 
 export function evaluateAlligatorBB(
@@ -31,7 +24,6 @@ export function evaluateAlligatorBB(
   h1: Candle[],
   minScore = 65,
 ): Signal {
-  // Necesitamos histórico para EMA200 H1 + Alligator con shift jaw=8 + BB(20).
   if (m15.length < 60 || h1.length < 220) return null;
 
   const last = m15[m15.length - 1];
@@ -59,29 +51,62 @@ export function evaluateAlligatorBB(
   if (!bull && !bear) return null;
   const bias: "long" | "short" = bull ? "long" : "short";
 
-  // --- Bollinger(20, 2) --------------------------------------------------
+  // --- Bollinger(20, 2) para varias barras (buscar retest) --------------
   const closes = m15.map((c) => c.close);
-  const bb0 = bollinger(closes, i,     20, 2);
-  const bb1 = bollinger(closes, i - 1, 20, 2);
-  if (!bb0 || !bb1) return null;
+  const bb0 = bollinger(closes, i, 20, 2);
+  if (!bb0) return null;
 
-  // --- Trigger: breakout de banda con cuerpo fuerte ----------------------
-  const range = Math.max(0.01, last.high - last.low);
-  const body  = Math.abs(last.close - last.open);
-  const bodyPct = body / range;
-  if (bodyPct < 0.55) return null;
+  // [A] RETEST: buscar breakout en las últimas 3 velas (i-1, i-2, i-3),
+  // y validar que la vela ACTUAL es un pullback que aún respeta la banda.
+  let breakoutIdx = -1;
+  let breakoutBody = 0;
+  let breakoutRange = 0;
+  for (let k = 1; k <= 3; k++) {
+    const bIdx = i - k;
+    if (bIdx < 21) break;
+    const bb_b = bollinger(closes, bIdx, 20, 2);
+    const bb_bPrev = bollinger(closes, bIdx - 1, 20, 2);
+    if (!bb_b || !bb_bPrev) continue;
+    const bBar = m15[bIdx];
+    const rng = Math.max(0.01, bBar.high - bBar.low);
+    const bod = Math.abs(bBar.close - bBar.open);
+    const bodyPct = bod / rng;
+    if (bodyPct < 0.55) continue;
+    // [C] Mecha contra-tendencia limitada (≤ 40% del rango)
+    const upperWick = bBar.high - Math.max(bBar.open, bBar.close);
+    const lowerWick = Math.min(bBar.open, bBar.close) - bBar.low;
+    const oppWick = bias === "long" ? upperWick : lowerWick;
+    if (oppWick / rng > 0.40) continue;
+    const brokeUp   = bias === "long"  && m15[bIdx - 1].close <= bb_bPrev.upper && bBar.close > bb_b.upper && bBar.close > bBar.open;
+    const brokeDown = bias === "short" && m15[bIdx - 1].close >= bb_bPrev.lower && bBar.close < bb_b.lower && bBar.close < bBar.open;
+    if (brokeUp || brokeDown) {
+      breakoutIdx = bIdx;
+      breakoutBody = bodyPct;
+      breakoutRange = rng;
+      break;
+    }
+  }
+  if (breakoutIdx < 0) return null;
 
-  const breakUp   = bias === "long"  && prev.close <= bb1.upper && last.close > bb0.upper && last.close > last.open;
-  const breakDown = bias === "short" && prev.close >= bb1.lower && last.close < bb0.lower && last.close < last.open;
-  if (!breakUp && !breakDown) return null;
+  // Vela actual = retest válido: cerca de la banda rota pero sin perderla.
+  // Long: precio bajó hacia bb0.upper pero close aún > bb0.mid (no colapsó).
+  // Short: precio subió hacia bb0.lower pero close aún < bb0.mid.
+  const pulledBack = bias === "long"
+    ? (last.low <= bb0.upper * 1.001 && last.close > bb0.mid && last.close > prev.low)
+    : (last.high >= bb0.lower * 0.999 && last.close < bb0.mid && last.close < prev.high);
+  if (!pulledBack) return null;
 
-  // --- Macro filter H1 EMA200 --------------------------------------------
+  // [E] Macro H1 EMA200 con pendiente ------------------------------------
   const h1EmaArr = ema(h1.map((c) => c.close), 200);
   const lastH1Ema = h1EmaArr[h1EmaArr.length - 1];
+  const pastH1Ema = h1EmaArr[h1EmaArr.length - 11];
   const lastH1Close = h1[h1.length - 1].close;
-  if (!Number.isFinite(lastH1Ema) || lastH1Ema <= 0) return null;
+  if (!Number.isFinite(lastH1Ema) || lastH1Ema <= 0 || !Number.isFinite(pastH1Ema)) return null;
   if (bias === "long"  && lastH1Close <= lastH1Ema) return null;
   if (bias === "short" && lastH1Close >= lastH1Ema) return null;
+  const emaSlope = (lastH1Ema - pastH1Ema) / pastH1Ema;
+  if (bias === "long"  && emaSlope < 0.0002) return null;   // ~0.02% en 10h
+  if (bias === "short" && emaSlope > -0.0002) return null;
 
   // --- ATR M15 sano ------------------------------------------------------
   const atrArr = atr(m15, 14);
@@ -92,30 +117,49 @@ export function evaluateAlligatorBB(
   const atrRatio = median80 > 0 ? lastAtr / median80 : 1;
   if (atrRatio < 0.6 || atrRatio > 2.0) return null;
 
+  // [B] Boca del Alligator abierta con fuerza (spread ≥ 0.9×ATR) ---------
+  const gatorSpread = Math.abs(lips0 - jaw0) / lastAtr;
+  if (gatorSpread < 0.9) return null;
+
   // --- Ancho de banda mínimo (evita squeeze) -----------------------------
   const bbWidthPct = (bb0.upper - bb0.lower) / bb0.mid;
   if (bbWidthPct < 0.004) return null;
 
-  // --- Entry / SL / TPs --------------------------------------------------
+  // --- [D] Entry / SL ESTRUCTURAL / TPs ---------------------------------
   const entry = last.close;
-  const sl = bias === "long" ? entry - 1.5 * lastAtr : entry + 1.5 * lastAtr;
+  const lookback = m15.slice(-10);
+  const swingLow  = Math.min(...lookback.map((c) => c.low));
+  const swingHigh = Math.max(...lookback.map((c) => c.high));
+  const buffer = 0.3 * lastAtr;
+  const structSL = bias === "long" ? swingLow - buffer : swingHigh + buffer;
+  const atrCap   = bias === "long" ? entry - 1.8 * lastAtr : entry + 1.8 * lastAtr;
+  // Elegimos el SL más "cercano" al entry (limita riesgo) entre estructural
+  // y cap 1.8×ATR. Si el estructural queda demasiado cerca (< 0.6×ATR de
+  // entry) lo relajamos a 0.6×ATR para no ser barridos por ruido.
+  let sl = bias === "long"
+    ? Math.max(structSL, atrCap)
+    : Math.min(structSL, atrCap);
+  const minRisk = 0.6 * lastAtr;
+  if (Math.abs(entry - sl) < minRisk) {
+    sl = bias === "long" ? entry - minRisk : entry + minRisk;
+  }
   const risk = Math.abs(entry - sl);
   if (risk <= 0) return null;
   const tp1 = bias === "long" ? entry + risk     : entry - risk;
   const tp2 = bias === "long" ? entry + risk * 2 : entry - risk * 2;
   const tp3 = bias === "long" ? entry + risk * 3 : entry - risk * 3;
 
-  // --- Score (mismos slots que el resto de estrategias) ------------------
-  const gatorSpread = Math.abs(lips0 - jaw0) / lastAtr; // "boca abierta"
+  // --- Score ------------------------------------------------------------
   const breakoutStrength = bias === "long"
     ? (last.close - bb0.upper) / range
     : (bb0.lower - last.close) / range;
+  const range = breakoutRange; // usado sólo para el score info
 
   const breakdown = {
-    h4Trend: 18,                                                         // H1 EMA200 alineado
-    h1Sweep: bodyPct >= 0.75 ? 22 : bodyPct >= 0.65 ? 18 : 14,
-    m15Fvg:  gatorSpread >= 1.2 ? 15 : gatorSpread >= 0.8 ? 12 : 8,
-    m15Bos:  breakoutStrength > 0.25 ? 14 : breakoutStrength > 0.1 ? 10 : 6,
+    h4Trend: emaSlope > 0.001 || emaSlope < -0.001 ? 20 : 15,           // pendiente H1
+    h1Sweep: breakoutBody >= 0.75 ? 22 : breakoutBody >= 0.65 ? 18 : 14,
+    m15Fvg:  gatorSpread >= 1.4 ? 15 : gatorSpread >= 1.1 ? 12 : 9,
+    m15Bos:  breakoutStrength > 0.25 ? 14 : breakoutStrength > 0.1 ? 10 : 7,
     killzone: inKz ? 12 : 4,
     atr:     (atrRatio >= 0.8 && atrRatio <= 1.5) ? 10 : 7,
     h1Alignment: bbWidthPct >= 0.008 ? 5 : 3,
@@ -139,17 +183,17 @@ export function evaluateAlligatorBB(
     tp2: round(tp2),
     tp3: round(tp3),
     management: {
-      breakEvenAtR: 1.0,   // BE al alcanzar TP1
-      timeStopBars: 12,    // ~3h M15
+      breakEvenAtR: 1.0,
+      timeStopBars: 12,
     },
     reasoning: {
-      h4Trend: `H1 EMA200 alineada · bias ${bias} (H1 close ${lastH1Close.toFixed(2)} vs EMA ${lastH1Ema.toFixed(2)})`,
-      h1Liquidity: `Alligator abierto (spread ${gatorSpread.toFixed(2)}×ATR) · lips ${lips0.toFixed(2)} teeth ${teeth0.toFixed(2)} jaw ${jaw0.toFixed(2)}`,
-      m15Confirmation: `Cierre ${bias === "long" ? "sobre banda sup " + bb0.upper.toFixed(2) : "bajo banda inf " + bb0.lower.toFixed(2)} · cuerpo ${(bodyPct * 100).toFixed(0)}%`,
+      h4Trend: `H1 EMA200 con pendiente ${(emaSlope * 100).toFixed(2)}% · ${bias}`,
+      h1Liquidity: `Alligator spread ${gatorSpread.toFixed(2)}×ATR · lips ${lips0.toFixed(2)} teeth ${teeth0.toFixed(2)} jaw ${jaw0.toFixed(2)}`,
+      m15Confirmation: `Retest de banda ${bias === "long" ? "sup " + bb0.upper.toFixed(2) : "inf " + bb0.lower.toFixed(2)} tras breakout hace ${i - breakoutIdx} vela(s) · cuerpo ${(breakoutBody * 100).toFixed(0)}%`,
       notes: [
         `Killzone Lon/NY: ${inKz ? "sí" : "fuera"} (UTC ${hUTC})`,
         `BB width ${(bbWidthPct * 100).toFixed(2)}% · ATR ratio ${(atrRatio * 100).toFixed(0)}%`,
-        `SL 1.5×ATR = ${risk.toFixed(2)} · TPs 1R/2R/3R`,
+        `SL estructural (swing ± 0.3×ATR, cap 1.8×ATR) = ${risk.toFixed(2)} · TPs 1R/2R/3R`,
         `Mgmt: BE@1R + time-stop 12 velas M15`,
         `Score ${breakdown.total}/100`,
       ],
