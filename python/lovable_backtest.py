@@ -887,8 +887,8 @@ def _bollinger_at(closes: np.ndarray, idx: int, n: int, k: float):
 
 
 def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
-    min_score = params.get("min_score", 65)
-    m15 = bars.get("M15"); h1 = bars.get("H1")
+    min_score = params.get("min_score", 70)
+    m15 = bars.get("M15"); h1 = bars.get("H1"); h4 = bars.get("H4")
     if m15 is None or h1 is None:
         return None
     if len(m15) < 60 or len(h1) < 220:
@@ -897,7 +897,10 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     last = m15.iloc[-1]; prev = m15.iloc[-2]
     dt = datetime.fromtimestamp(int(last["time"]), tz=timezone.utc)
     h_utc = dt.hour
-    in_kz = 7 <= h_utc <= 16
+    # [J] Overlap Londres-NY estricto
+    if not (12 <= h_utc <= 17):
+        return None
+    in_kz = True
 
     # Alligator SMMA sobre precio mediano
     median = ((m15["high"].values + m15["low"].values) / 2.0)
@@ -926,7 +929,34 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
         return None
     up0, mid0, lo0 = bb0
 
-    # [A] RETEST: buscar breakout en velas i-1..i-3
+    m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
+    last_a = float(m15_atr[-1]) if len(m15_atr) else 0.0
+    if last_a <= 0:
+        return None
+
+    # [F] TTM-Squeeze release: BB dentro de Keltner(20,1.5×ATR) en las
+    # últimas 6-20 velas, y AHORA fuera.
+    k_mult = 1.5
+    kc_up0 = mid0 + k_mult * last_a
+    kc_lo0 = mid0 - k_mult * last_a
+    if not (up0 > kc_up0 and lo0 < kc_lo0):
+        return None
+    had_squeeze = False
+    for kk in range(2, 21):
+        idx = i - kk
+        if idx < 20: break
+        bbk = _bollinger_at(closes, idx, 20, 2.0)
+        atrk = float(m15_atr[idx]) if idx < len(m15_atr) else 0.0
+        if bbk is None or atrk <= 0: continue
+        upk, midk, lok = bbk
+        kcU = midk + k_mult * atrk; kcL = midk - k_mult * atrk
+        if upk < kcU and lok > kcL:
+            had_squeeze = True
+            break
+    if not had_squeeze:
+        return None
+
+    # [A] RETEST: buscar breakout en velas i-1..i-3 (cuerpo≥65%, mecha≤30%)
     breakout_idx = -1
     breakout_body = 0.0
     breakout_range = 0.0
@@ -944,13 +974,12 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
         rng = max(0.01, float(bar["high"] - bar["low"]))
         bod = abs(float(bar["close"] - bar["open"]))
         body_pct = bod / rng
-        if body_pct < 0.55:
+        if body_pct < 0.65:
             continue
-        # [C] Mecha contra-tendencia limitada
         upper_wick = float(bar["high"]) - max(float(bar["open"]), float(bar["close"]))
         lower_wick = min(float(bar["open"]), float(bar["close"])) - float(bar["low"])
         opp_wick = upper_wick if bias == "long" else lower_wick
-        if opp_wick / rng > 0.40:
+        if opp_wick / rng > 0.30:
             continue
         prev_bar = m15.iloc[b_idx - 1]
         broke_up   = bias == "long"  and float(prev_bar["close"]) <= up_bp and float(bar["close"]) > up_b and float(bar["close"]) > float(bar["open"])
@@ -963,7 +992,6 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     if breakout_idx < 0:
         return None
 
-    # Retest válido en vela actual
     if bias == "long":
         pulled_back = (float(last["low"]) <= up0 * 1.001
                        and float(last["close"]) > mid0
@@ -975,7 +1003,20 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     if not pulled_back:
         return None
 
-    # [E] Macro H1 EMA200 con pendiente
+    # [G] Awesome Oscillator (Bill Williams)
+    ao_arr = _awesome_osc(median, 5, 34)
+    ao0, ao1, ao2 = ao_arr[i], ao_arr[i - 1], ao_arr[i - 2]
+    if not all(np.isfinite([ao0, ao1, ao2])):
+        return None
+    if bias == "long"  and not (ao0 > 0 and ao0 > ao1 and ao1 > ao2): return None
+    if bias == "short" and not (ao0 < 0 and ao0 < ao1 and ao1 < ao2): return None
+
+    # [H] ADX(14) ≥ 22 en M15
+    adx_v = _adx_last(m15["high"].values, m15["low"].values, m15["close"].values, 14)
+    if not np.isfinite(adx_v) or adx_v < 22:
+        return None
+
+    # [I] Macro H1 EMA200 con pendiente
     h1_ema = ema(h1["close"].values, 200)
     last_ema = float(h1_ema[-1])
     if len(h1_ema) < 11:
@@ -990,10 +1031,15 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     if bias == "long"  and ema_slope < 0.0002: return None
     if bias == "short" and ema_slope > -0.0002: return None
 
-    m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
-    last_a = float(m15_atr[-1]) if len(m15_atr) else 0.0
-    if last_a <= 0:
-        return None
+    # [I] H4 EMA200 alineada (si viene)
+    if h4 is not None and len(h4) >= 210:
+        h4_ema = ema(h4["close"].values, 200)
+        last_h4 = float(h4.iloc[-1]["close"])
+        last_h4_ema = float(h4_ema[-1])
+        if np.isfinite(last_h4_ema) and last_h4_ema > 0:
+            if bias == "long"  and last_h4 <= last_h4_ema: return None
+            if bias == "short" and last_h4 >= last_h4_ema: return None
+
     arr = m15_atr[-80:]
     recent = np.sort(arr[arr > 0])
     median80 = float(recent[len(recent) // 2]) if len(recent) else last_a
@@ -1001,7 +1047,6 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     if atr_ratio < 0.6 or atr_ratio > 2.0:
         return None
 
-    # [B] Boca del Alligator abierta con fuerza
     gator_spread = abs(lips0 - jaw0) / last_a
     if gator_spread < 0.9:
         return None
@@ -1010,7 +1055,6 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     if bb_width_pct < 0.004:
         return None
 
-    # [D] SL estructural
     entry = float(last["close"])
     lookback = m15.iloc[-10:]
     swing_low = float(lookback["low"].min())
@@ -1033,13 +1077,13 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     break_strength = ((float(last["close"]) - up0) / rng_bo) if bias == "long" else ((lo0 - float(last["close"])) / rng_bo)
 
     breakdown = {
-        "h4Trend": 20 if (ema_slope > 0.001 or ema_slope < -0.001) else 15,
-        "h1Sweep": 22 if breakout_body >= 0.75 else 18 if breakout_body >= 0.65 else 14,
-        "m15Fvg":  15 if gator_spread >= 1.4 else 12 if gator_spread >= 1.1 else 9,
-        "m15Bos":  14 if break_strength > 0.25 else 10 if break_strength > 0.1 else 7,
-        "killzone": 12 if in_kz else 4,
+        "h4Trend": 22 if adx_v >= 30 else 18 if adx_v >= 25 else 14,
+        "h1Sweep": 20 if breakout_body >= 0.80 else 16 if breakout_body >= 0.70 else 12,
+        "m15Fvg":  14 if gator_spread >= 1.4 else 11 if gator_spread >= 1.1 else 8,
+        "m15Bos":  12 if break_strength > 0.25 else 9 if break_strength > 0.1 else 6,
+        "killzone": 12,
         "atr":     10 if (0.8 <= atr_ratio <= 1.5) else 7,
-        "h1Alignment": 5 if bb_width_pct >= 0.008 else 3,
+        "h1Alignment": 10 if (ema_slope > 0.001 or ema_slope < -0.001) else 6,
     }
     breakdown["total"] = sum(v for k, v in breakdown.items() if k != "total")
     if breakdown["total"] < min_score:
@@ -1047,7 +1091,53 @@ def evaluate_alligator_bb(bars: Bars, params: dict) -> dict | None:
     return {"bias": bias, "score": breakdown["total"], "scoreBreakdown": breakdown,
             "entry": _round(entry), "stopLoss": _round(sl),
             "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3),
-            "management": {"breakEvenAtR": 1.0, "timeStopBars": 12}}
+            "management": {"breakEvenAtR": 0.7, "timeStopBars": 10}}
+
+
+def _awesome_osc(median: np.ndarray, fast: int = 5, slow: int = 34) -> np.ndarray:
+    n = len(median)
+    out = np.full(n, np.nan, dtype=float)
+    if n < slow: return out
+    csum = np.cumsum(np.insert(median, 0, 0.0))
+    def sma(k, i):
+        return (csum[i + 1] - csum[i + 1 - k]) / k
+    for i in range(slow - 1, n):
+        out[i] = sma(fast, i) - sma(slow, i)
+    return out
+
+
+def _adx_last(high: np.ndarray, low: np.ndarray, close: np.ndarray, n: int = 14) -> float:
+    L = len(close)
+    if L < n * 2 + 1: return float("nan")
+    tr = np.zeros(L - 1); pdm = np.zeros(L - 1); mdm = np.zeros(L - 1)
+    for i in range(1, L):
+        up = high[i] - high[i - 1]
+        dn = low[i - 1] - low[i]
+        pdm[i - 1] = up if (up > dn and up > 0) else 0.0
+        mdm[i - 1] = dn if (dn > up and dn > 0) else 0.0
+        tr[i - 1] = max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
+    def wilder(a: np.ndarray) -> np.ndarray:
+        out = np.full(len(a), np.nan)
+        s = float(a[:n].sum())
+        out[n - 1] = s
+        for i in range(n, len(a)):
+            out[i] = out[i - 1] - out[i - 1] / n + a[i]
+        return out
+    trS = wilder(tr); pS = wilder(pdm); mS = wilder(mdm)
+    dx = np.full(len(trS), np.nan)
+    for i in range(len(trS)):
+        if not np.isfinite(trS[i]) or trS[i] == 0: continue
+        pdi = 100.0 * pS[i] / trS[i]; mdi = 100.0 * mS[i] / trS[i]
+        denom = pdi + mdi
+        dx[i] = 0.0 if denom == 0 else 100.0 * abs(pdi - mdi) / denom
+    valid = np.where(np.isfinite(dx))[0]
+    if len(valid) < n: return float("nan")
+    start = int(valid[0])
+    adx = float(dx[start:start + n].mean())
+    for i in range(start + n, len(dx)):
+        if not np.isfinite(dx[i]): continue
+        adx = (adx * (n - 1) + dx[i]) / n
+    return adx
 
 
 # ---------------------------------------------------------------------------
@@ -1069,8 +1159,8 @@ STRATEGIES: dict[str, StrategyEngine] = {
         "smc_london", "SMC Londres", "M15",
         ("H4", "H1", "M15"), evaluate_smc_london, {"min_score": 70}),
     "alligator_bb": StrategyEngine(
-        "alligator_bb", "Alligator + BB Breakout (M15)", "M15",
-        ("M15", "H1"), evaluate_alligator_bb, {"min_score": 65}),
+        "alligator_bb", "Alligator + BB v4 (M15)", "M15",
+        ("H4", "H1", "M15"), evaluate_alligator_bb, {"min_score": 70}),
     "fibo_scalping": StrategyEngine(
         "fibo_scalping", "Fibo Scalping M5", "M5",
         ("H4", "H1", "M15", "M5"), evaluate_fibo_scalping, {"min_score": 65}),
