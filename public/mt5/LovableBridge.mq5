@@ -14,7 +14,7 @@
 //|   4) En la pestaña "Inputs" pegar el token del EA.                |
 //+------------------------------------------------------------------+
 #property copyright "Lovable"
-#property version   "0.11"
+#property version   "0.110"
 #property strict
 
 input string InpBaseUrl      = "https://session-whispers-flow.lovable.app";
