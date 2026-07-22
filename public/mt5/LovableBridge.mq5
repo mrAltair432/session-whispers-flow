@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|  LovableBridge.mq5  —  EA "puente tonto" v0.11                   |
+//|  LovableBridge.mq5  —  EA "puente tonto" v0.12                   |
 //|  Ejecuta las señales que publica el dashboard en la tabla        |
 //|  mt5_signals. NO decide nada por sí mismo.                       |
 //|                                                                  |
@@ -14,7 +14,7 @@
 //|   4) En la pestaña "Inputs" pegar el token del EA.                |
 //+------------------------------------------------------------------+
 #property copyright "Lovable"
-#property version   "0.110"
+#property version   "0.120"
 #property strict
 
 input string InpBaseUrl      = "https://session-whispers-flow.lovable.app";
@@ -24,11 +24,13 @@ input double InpRiskPercent  = 0.5;                   // % del balance por trade
 input double InpMaxSpreadUsd = 0.60;                  // spread máximo aceptado en USD
 input int    InpPollSeconds  = 5;                     // polling
 input int    InpMagic        = 202607;
+input bool   InpDiagnosticOnInit = true;              // Prueba conexión/token al iniciar, sin operar
 
 #include <Trade\Trade.mqh>
 CTrade trade;
 
 datetime g_lastPoll = 0;
+int g_emptyPolls = 0;
 
 string WithToken(string url)
 {
@@ -43,7 +45,8 @@ int OnInit()
    if(StringLen(InpEaToken) < 8)
    { Alert("LovableBridge: token EA vacío. Pega el token en inputs."); return(INIT_FAILED); }
    EventSetTimer(MathMax(1, InpPollSeconds));
-   Print("LovableBridge v0.11 iniciado. BaseUrl=", InpBaseUrl, " Symbol=", InpSymbol, " Poll=", InpPollSeconds, "s");
+   Print("LovableBridge v0.12 iniciado. BaseUrl=", InpBaseUrl, " Symbol=", InpSymbol, " Poll=", InpPollSeconds, "s");
+   if(InpDiagnosticOnInit) DiagnosticPing();
    PollAndExecute();
    return(INIT_SUCCEEDED);
 }
@@ -72,7 +75,11 @@ string HttpGet(string url, int &outStatus)
       PrintFormat("LovableBridge WebRequest GET falló. err=%d. Revisa Tools -> Options -> Expert Advisors -> Allow WebRequest: %s", err, InpBaseUrl);
       return "";
    }
-   return CharArrayToString(result);
+   string body = CharArrayToString(result);
+   if(res < 200 || res >= 300) {
+      PrintFormat("LovableBridge GET HTTP %d resp=%s", res, body);
+   }
+   return body;
 }
 
 bool HttpPostJson(string url, string body)
@@ -120,6 +127,22 @@ string JsonStr(string src, string key)
 
 double JsonNum(string src, string key) { string v = JsonStr(src, key); return (v == "" ? 0.0 : StringToDouble(v)); }
 
+void DiagnosticPing()
+{
+   int status = 0;
+   string url = InpBaseUrl + "/api/public/mt5-signals?diag=1";
+   string body = HttpGet(url, status);
+   if(status == 200 && StringFind(body, "\"ok\":true") >= 0) {
+      Print("LovableBridge DIAGNOSTICO OK: conexión/token válidos. Respuesta=", body);
+      return;
+   }
+   if(status == 401) {
+      Print("LovableBridge DIAGNOSTICO FALLÓ: token inválido o no coincide con el dashboard. Respuesta=", body);
+      return;
+   }
+   PrintFormat("LovableBridge DIAGNOSTICO FALLÓ: HTTP=%d resp=%s", status, body);
+}
+
 //---
 void PollAndExecute()
 {
@@ -128,7 +151,14 @@ void PollAndExecute()
    string body = HttpGet(url, status);
    if(status == 401) { Print("LovableBridge: token inválido o no coincide con el dashboard. Genera uno nuevo, pégalo completo y reinicia el EA. Respuesta=", body); return; }
    if(status < 200 || status >= 300) { PrintFormat("LovableBridge GET HTTP %d resp=%s", status, body); return; }
-   if(body == "" || StringFind(body, "\"signal\":null") >= 0) return;
+   if(body == "" || StringFind(body, "\"signal\":null") >= 0) {
+      g_emptyPolls++;
+      if(g_emptyPolls == 1 || MathMod(g_emptyPolls, 12) == 0) {
+         PrintFormat("LovableBridge conectado: sin señales pendientes. polls_vacios=%d", g_emptyPolls);
+      }
+      return;
+   }
+   g_emptyPolls = 0;
 
    string id       = JsonStr(body, "id");
    string bias     = JsonStr(body, "bias");
