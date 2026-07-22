@@ -6,7 +6,8 @@ import { z } from "zod";
 // el header `X-EA-Token` o como query `?token=...`.
 //
 // GET  → devuelve la señal pending más reciente (o null) para el usuario dueño
-//        del token, y la marca como 'sent'.
+//        del token, y la marca como 'sent'. Si viene `?diag=1`, solo prueba
+//        conexión/token y NO entrega señales ni abre operaciones.
 // POST → el EA reporta fills / cierres / errores.
 //
 // Este endpoint es "tonto": no evalúa estrategias ni decide nada; solo mueve
@@ -18,11 +19,13 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
       GET: async ({ request }) => {
         const token = extractToken(request);
         if (!token) return json({ error: "missing token" }, 401);
+        const url = new URL(request.url);
+        const diagnosticOnly = url.searchParams.get("diag") === "1";
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
         const { data: tok, error: tokErr } = await supabaseAdmin
           .from("mt5_ea_tokens")
-          .select("user_id")
+          .select("user_id, last_used_at")
           .eq("token", token)
           .maybeSingle();
         if (tokErr || !tok) return json({ error: "invalid token" }, 401);
@@ -34,6 +37,33 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
           .eq("token", token);
 
         const nowIso = new Date().toISOString();
+
+        if (diagnosticOnly) {
+          const { count: pendingCount } = await supabaseAdmin
+            .from("mt5_signals")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", tok.user_id)
+            .eq("status", "pending")
+            .gte("expires_at", nowIso);
+
+          const { data: latest } = await supabaseAdmin
+            .from("mt5_signals")
+            .select("id, engine, bias, status, confidence, score, error_message, created_at, expires_at")
+            .eq("user_id", tok.user_id)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          return json({
+            ok: true,
+            mode: "diagnostic",
+            token: "valid",
+            server_time: nowIso,
+            pending_count: pendingCount ?? 0,
+            latest_signal: latest ?? null,
+          });
+        }
+
         // 1. Marcar como expiradas las pending vencidas
         await supabaseAdmin
           .from("mt5_signals")

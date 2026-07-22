@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import { getMyConfig, updateMyConfig } from "@/lib/config.functions";
 import { sendTelegramTest } from "@/lib/setups.functions";
-import { getMyEaToken, rotateMyEaToken, deleteMyEaToken } from "@/lib/mt5.functions";
+import { getMyEaToken, rotateMyEaToken, deleteMyEaToken, getMyMt5Diagnostics } from "@/lib/mt5.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -69,13 +69,20 @@ function SettingsPage() {
   const fetchEa = useServerFn(getMyEaToken);
   const rotateEa = useServerFn(rotateMyEaToken);
   const deleteEa = useServerFn(deleteMyEaToken);
+  const fetchMt5Diag = useServerFn(getMyMt5Diagnostics);
   const eaQ = useQuery({ queryKey: ["my-ea-token"], queryFn: () => fetchEa() });
+  const diagQ = useQuery({
+    queryKey: ["my-mt5-diagnostics"],
+    queryFn: () => fetchMt5Diag(),
+    refetchInterval: 8000,
+  });
   const [freshToken, setFreshToken] = useState<string | null>(null);
   const rotateM = useMutation({
     mutationFn: () => rotateEa(),
     onSuccess: (res: { token: string }) => {
       setFreshToken(res.token);
       qc.invalidateQueries({ queryKey: ["my-ea-token"] });
+      qc.invalidateQueries({ queryKey: ["my-mt5-diagnostics"] });
       toast.success("Token generado. Cópialo ahora — no volverá a mostrarse.");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
@@ -85,6 +92,7 @@ function SettingsPage() {
     onSuccess: () => {
       setFreshToken(null);
       qc.invalidateQueries({ queryKey: ["my-ea-token"] });
+      qc.invalidateQueries({ queryKey: ["my-mt5-diagnostics"] });
       toast.success("Token eliminado");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
@@ -99,6 +107,8 @@ function SettingsPage() {
       },
     });
   }
+
+  const lastEaUse = diagQ.data?.last_used_at ?? eaQ.data?.last_used_at ?? null;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -223,9 +233,41 @@ function SettingsPage() {
                 <div className="text-xs text-muted-foreground rounded-md border border-border bg-background/50 p-3">
                   <strong className="text-emerald-400">✅ Token activo.</strong>{" "}
                   Creado: {new Date(eaQ.data.created_at).toLocaleString()}.{" "}
-                  {eaQ.data.last_used_at
-                    ? <>Último uso: <span className="font-mono">{new Date(eaQ.data.last_used_at).toLocaleString()}</span></>
+                  {lastEaUse
+                    ? <>Último uso: <span className="font-mono">{new Date(lastEaUse).toLocaleString()}</span></>
                     : <span className="text-amber-400">Aún no se ha conectado el EA.</span>}
+                </div>
+              )}
+
+              {eaQ.data && (
+                <div className="rounded-md border border-border bg-background/50 p-3 text-xs text-muted-foreground space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <strong className="text-foreground">Diagnóstico MT5</strong>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => diagQ.refetch()}
+                      disabled={diagQ.isFetching}
+                    >
+                      {diagQ.isFetching ? "Revisando..." : "Actualizar"}
+                    </Button>
+                  </div>
+                  <div className="grid gap-1 sm:grid-cols-2">
+                    <p>Auto-envío: <span className="text-foreground">{diagQ.data?.auto_route_enabled ? "Activo" : "Apagado"}</span></p>
+                    <p>Confianza mínima: <span className="text-foreground">{diagQ.data?.min_confidence === "medium" ? "Media o Alta" : "Solo Alta"}</span></p>
+                    <p>Señales pendientes: <span className="text-foreground">{diagQ.data?.pending_count ?? 0}</span></p>
+                    <p>Revisado: <span className="text-foreground">{diagQ.data?.checked_at ? new Date(diagQ.data.checked_at).toLocaleTimeString() : "—"}</span></p>
+                  </div>
+                  {diagQ.data?.latest_signal ? (
+                    <p>
+                      Última señal MT5: <span className="text-foreground font-mono">{diagQ.data.latest_signal.engine}</span>{" "}
+                      {diagQ.data.latest_signal.bias} · {diagQ.data.latest_signal.status} · score {diagQ.data.latest_signal.score ?? "—"}
+                      {diagQ.data.latest_signal.error_message ? ` · ${diagQ.data.latest_signal.error_message}` : ""}
+                    </p>
+                  ) : (
+                    <p>No hay señales MT5 generadas todavía. Si Telegram notificó pero aquí no aparece nada, la señal no pasó el filtro de auto-envío o no estaba guardado el switch.</p>
+                  )}
                 </div>
               )}
 
