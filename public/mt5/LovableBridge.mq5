@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|  LovableBridge.mq5  —  EA "puente tonto" v0.1                    |
+//|  LovableBridge.mq5  —  EA "puente tonto" v0.11                   |
 //|  Ejecuta las señales que publica el dashboard en la tabla        |
 //|  mt5_signals. NO decide nada por sí mismo.                       |
 //|                                                                  |
@@ -14,7 +14,7 @@
 //|   4) En la pestaña "Inputs" pegar el token del EA.                |
 //+------------------------------------------------------------------+
 #property copyright "Lovable"
-#property version   "0.10"
+#property version   "0.11"
 #property strict
 
 input string InpBaseUrl      = "https://session-whispers-flow.lovable.app";
@@ -30,6 +30,12 @@ CTrade trade;
 
 datetime g_lastPoll = 0;
 
+string WithToken(string url)
+{
+   string sep = (StringFind(url, "?") >= 0 ? "&" : "?");
+   return url + sep + "token=" + InpEaToken;
+}
+
 int OnInit()
 {
    trade.SetExpertMagicNumber(InpMagic);
@@ -37,7 +43,8 @@ int OnInit()
    if(StringLen(InpEaToken) < 8)
    { Alert("LovableBridge: token EA vacío. Pega el token en inputs."); return(INIT_FAILED); }
    EventSetTimer(MathMax(1, InpPollSeconds));
-   Print("LovableBridge iniciado. Poll cada ", InpPollSeconds, "s");
+   Print("LovableBridge v0.11 iniciado. BaseUrl=", InpBaseUrl, " Symbol=", InpSymbol, " Poll=", InpPollSeconds, "s");
+   PollAndExecute();
    return(INIT_SUCCEEDED);
 }
 
@@ -58,9 +65,13 @@ string HttpGet(string url, int &outStatus)
    char post[]; char result[]; string headers = "X-EA-Token: " + InpEaToken + "\r\n";
    string respHeaders;
    ResetLastError();
-   int res = WebRequest("GET", url, headers, 5000, post, result, respHeaders);
+   int res = WebRequest("GET", WithToken(url), headers, 5000, post, result, respHeaders);
    outStatus = res;
-   if(res == -1) { PrintFormat("WebRequest GET err=%d", GetLastError()); return ""; }
+   if(res == -1) {
+      int err = GetLastError();
+      PrintFormat("LovableBridge WebRequest GET falló. err=%d. Revisa Tools -> Options -> Expert Advisors -> Allow WebRequest: %s", err, InpBaseUrl);
+      return "";
+   }
    return CharArrayToString(result);
 }
 
@@ -70,8 +81,15 @@ bool HttpPostJson(string url, string body)
    char result[]; string respHeaders;
    string headers = "X-EA-Token: " + InpEaToken + "\r\nContent-Type: application/json\r\n";
    ResetLastError();
-   int res = WebRequest("POST", url, headers, 5000, post, result, respHeaders);
-   if(res == -1) { PrintFormat("WebRequest POST err=%d", GetLastError()); return false; }
+   int res = WebRequest("POST", WithToken(url), headers, 5000, post, result, respHeaders);
+   if(res == -1) {
+      int err = GetLastError();
+      PrintFormat("LovableBridge WebRequest POST falló. err=%d. Revisa Tools -> Options -> Expert Advisors -> Allow WebRequest: %s", err, InpBaseUrl);
+      return false;
+   }
+   if(res < 200 || res >= 300) {
+      PrintFormat("LovableBridge POST HTTP %d resp=%s", res, CharArrayToString(result));
+   }
    return (res >= 200 && res < 300);
 }
 
@@ -108,6 +126,8 @@ void PollAndExecute()
    int status = 0;
    string url = InpBaseUrl + "/api/public/mt5-signals";
    string body = HttpGet(url, status);
+   if(status == 401) { Print("LovableBridge: token inválido o no coincide con el dashboard. Genera uno nuevo, pégalo completo y reinicia el EA. Respuesta=", body); return; }
+   if(status < 200 || status >= 300) { PrintFormat("LovableBridge GET HTTP %d resp=%s", status, body); return; }
    if(body == "" || StringFind(body, "\"signal\":null") >= 0) return;
 
    string id       = JsonStr(body, "id");
