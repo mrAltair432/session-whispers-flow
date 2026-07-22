@@ -8,7 +8,7 @@ export const getMyEaToken = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase
       .from("mt5_ea_tokens")
-      .select("id, token, label, last_used_at, created_at")
+      .select("id, label, last_used_at, created_at")
       .eq("user_id", context.userId)
       .maybeSingle();
     if (error) throw new Error(error.message);
