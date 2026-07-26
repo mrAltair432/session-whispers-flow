@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { getMyConfig, updateMyConfig } from "@/lib/config.functions";
 import { sendTelegramTest } from "@/lib/setups.functions";
 import { getMyEaToken, rotateMyEaToken, deleteMyEaToken, getMyMt5Diagnostics, getMyEngineHealth } from "@/lib/mt5.functions";
+import { listMyScorers, uploadMyScorer, deleteMyScorer } from "@/lib/ml-scorers.functions";
 import { listStrategies } from "@/lib/strategies";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,8 @@ function SettingsPage() {
     mt5_auto_route_enabled: false,
     mt5_min_confidence: "high" as "high" | "medium",
     mt5_enabled_engines: null as string[] | null,
+    econ_filter_enabled: true,
+    econ_filter_window_min: 30,
   });
 
   useEffect(() => {
@@ -49,6 +52,8 @@ function SettingsPage() {
       mt5_auto_route_enabled: (data as { mt5_auto_route_enabled?: boolean }).mt5_auto_route_enabled ?? false,
       mt5_min_confidence: ((data as { mt5_min_confidence?: string }).mt5_min_confidence as "high" | "medium") ?? "high",
       mt5_enabled_engines: (data as { mt5_enabled_engines?: string[] | null }).mt5_enabled_engines ?? null,
+      econ_filter_enabled: (data as { econ_filter_enabled?: boolean }).econ_filter_enabled ?? true,
+      econ_filter_window_min: (data as { econ_filter_window_min?: number }).econ_filter_window_min ?? 30,
     });
   }, [data]);
 
@@ -106,6 +111,59 @@ function SettingsPage() {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
   });
+
+  // ---- ML scorers ----
+  const fetchScorers = useServerFn(listMyScorers);
+  const uploadScorer = useServerFn(uploadMyScorer);
+  const removeScorer = useServerFn(deleteMyScorer);
+  const scorersQ = useQuery({ queryKey: ["my-scorers"], queryFn: () => fetchScorers() });
+  const uploadScorerM = useMutation({
+    mutationFn: uploadScorer,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-scorers"] });
+      toast.success("Modelo ML cargado");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
+  });
+  const deleteScorerM = useMutation({
+    mutationFn: removeScorer,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-scorers"] });
+      toast.success("Modelo eliminado");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
+  });
+
+  // ---- Calendario económico (feed público) ----
+  const econQ = useQuery({
+    queryKey: ["econ-calendar"],
+    queryFn: async () => {
+      const res = await fetch("/api/public/econ-calendar");
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json() as Promise<{ events: Array<{ timeISO: string; label: string; type: string; source: string }> }>;
+    },
+    staleTime: 60 * 60 * 1000,
+  });
+
+  async function handleScorerFile(engine: string, file: File) {
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text) as {
+        features?: string[]; weights?: number[]; intercept?: number; auc?: number;
+        coef?: number[]; feature_names?: string[]; // formatos alternativos del notebook
+      };
+      const features = json.features ?? json.feature_names ?? [];
+      const weights = json.weights ?? json.coef ?? [];
+      const intercept = json.intercept ?? 0;
+      if (!features.length || features.length !== weights.length) {
+        toast.error("JSON inválido: features y weights deben coincidir");
+        return;
+      }
+      uploadScorerM.mutate({ data: { engine, features, weights, intercept, auc: json.auc } });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "JSON inválido");
+    }
+  }
 
   function save(e: React.FormEvent) {
     e.preventDefault();
