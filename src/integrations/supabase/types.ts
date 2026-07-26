@@ -413,6 +413,7 @@ export type Database = {
           max_daily_loss_pct: number
           max_trades_per_day: number
           mt5_auto_route_enabled: boolean
+          mt5_enabled_engines: string[] | null
           mt5_min_confidence: string
           risk_per_trade: number
           telegram_chat_id: string | null
@@ -427,6 +428,7 @@ export type Database = {
           max_daily_loss_pct?: number
           max_trades_per_day?: number
           mt5_auto_route_enabled?: boolean
+          mt5_enabled_engines?: string[] | null
           mt5_min_confidence?: string
           risk_per_trade?: number
           telegram_chat_id?: string | null
@@ -441,6 +443,7 @@ export type Database = {
           max_daily_loss_pct?: number
           max_trades_per_day?: number
           mt5_auto_route_enabled?: boolean
+          mt5_enabled_engines?: string[] | null
           mt5_min_confidence?: string
           risk_per_trade?: number
           telegram_chat_id?: string | null

@@ -1,0 +1,1 @@
+ALTER TABLE public.user_config ADD COLUMN IF NOT EXISTS mt5_enabled_engines text[] NULL;
