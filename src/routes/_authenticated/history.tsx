@@ -26,11 +26,14 @@ function engineLabel(key: string): string {
 function HistoryPage() {
   const fetchStats = useServerFn(getEngineStats);
   const fetchRecent = useServerFn(getRecentSignals);
+  const fetchRealTrades = useServerFn(getMyRealTrades);
   const statsQ = useQuery({ queryKey: ["engine-stats"], queryFn: () => fetchStats(), refetchInterval: 60_000 });
   const recentQ = useQuery({ queryKey: ["recent-signals"], queryFn: () => fetchRecent(), refetchInterval: 60_000 });
+  const realTradesQ = useQuery({ queryKey: ["my-real-trades"], queryFn: () => fetchRealTrades(), refetchInterval: 15_000 });
 
   const stats = statsQ.data ?? [];
   const recent = recentQ.data ?? [];
+  const realTrades = realTradesQ.data ?? [];
 
   return (
     <div className="min-h-screen bg-background text-foreground">
