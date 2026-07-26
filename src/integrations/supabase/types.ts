@@ -136,6 +136,45 @@ export type Database = {
           },
         ]
       }
+      ml_scorers: {
+        Row: {
+          auc: number | null
+          created_at: string
+          engine: string
+          features: string[]
+          id: string
+          intercept: number
+          trained_at: string
+          updated_at: string
+          user_id: string
+          weights: Json
+        }
+        Insert: {
+          auc?: number | null
+          created_at?: string
+          engine: string
+          features: string[]
+          id?: string
+          intercept?: number
+          trained_at?: string
+          updated_at?: string
+          user_id: string
+          weights: Json
+        }
+        Update: {
+          auc?: number | null
+          created_at?: string
+          engine?: string
+          features?: string[]
+          id?: string
+          intercept?: number
+          trained_at?: string
+          updated_at?: string
+          user_id?: string
+          weights?: Json
+        }
+        Relationships: []
+      }
       mt5_ea_tokens: {
         Row: {
           created_at: string
@@ -348,6 +387,7 @@ export type Database = {
           entry_time: string | null
           exit_price: number | null
           id: string
+          metadata: Json | null
           outcome: string | null
           r_multiple: number | null
           reasoning: Json
@@ -371,6 +411,7 @@ export type Database = {
           entry_time?: string | null
           exit_price?: number | null
           id?: string
+          metadata?: Json | null
           outcome?: string | null
           r_multiple?: number | null
           reasoning?: Json
@@ -394,6 +435,7 @@ export type Database = {
           entry_time?: string | null
           exit_price?: number | null
           id?: string
+          metadata?: Json | null
           outcome?: string | null
           r_multiple?: number | null
           reasoning?: Json
@@ -449,6 +491,8 @@ export type Database = {
           auto_alert_high_confidence: boolean
           balance: number
           created_at: string
+          econ_filter_enabled: boolean
+          econ_filter_window_min: number
           max_daily_loss_pct: number
           max_trades_per_day: number
           mt5_auto_route_enabled: boolean
@@ -464,6 +508,8 @@ export type Database = {
           auto_alert_high_confidence?: boolean
           balance?: number
           created_at?: string
+          econ_filter_enabled?: boolean
+          econ_filter_window_min?: number
           max_daily_loss_pct?: number
           max_trades_per_day?: number
           mt5_auto_route_enabled?: boolean
@@ -479,6 +525,8 @@ export type Database = {
           auto_alert_high_confidence?: boolean
           balance?: number
           created_at?: string
+          econ_filter_enabled?: boolean
+          econ_filter_window_min?: number
           max_daily_loss_pct?: number
           max_trades_per_day?: number
           mt5_auto_route_enabled?: boolean

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { getMyConfig, updateMyConfig } from "@/lib/config.functions";
 import { sendTelegramTest } from "@/lib/setups.functions";
 import { getMyEaToken, rotateMyEaToken, deleteMyEaToken, getMyMt5Diagnostics, getMyEngineHealth } from "@/lib/mt5.functions";
+import { listMyScorers, uploadMyScorer, deleteMyScorer } from "@/lib/ml-scorers.functions";
 import { listStrategies } from "@/lib/strategies";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +36,8 @@ function SettingsPage() {
     mt5_auto_route_enabled: false,
     mt5_min_confidence: "high" as "high" | "medium",
     mt5_enabled_engines: null as string[] | null,
+    econ_filter_enabled: true,
+    econ_filter_window_min: 30,
   });
 
   useEffect(() => {
@@ -49,6 +52,8 @@ function SettingsPage() {
       mt5_auto_route_enabled: (data as { mt5_auto_route_enabled?: boolean }).mt5_auto_route_enabled ?? false,
       mt5_min_confidence: ((data as { mt5_min_confidence?: string }).mt5_min_confidence as "high" | "medium") ?? "high",
       mt5_enabled_engines: (data as { mt5_enabled_engines?: string[] | null }).mt5_enabled_engines ?? null,
+      econ_filter_enabled: (data as { econ_filter_enabled?: boolean }).econ_filter_enabled ?? true,
+      econ_filter_window_min: (data as { econ_filter_window_min?: number }).econ_filter_window_min ?? 30,
     });
   }, [data]);
 
@@ -106,6 +111,59 @@ function SettingsPage() {
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
   });
+
+  // ---- ML scorers ----
+  const fetchScorers = useServerFn(listMyScorers);
+  const uploadScorer = useServerFn(uploadMyScorer);
+  const removeScorer = useServerFn(deleteMyScorer);
+  const scorersQ = useQuery({ queryKey: ["my-scorers"], queryFn: () => fetchScorers() });
+  const uploadScorerM = useMutation({
+    mutationFn: uploadScorer,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-scorers"] });
+      toast.success("Modelo ML cargado");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
+  });
+  const deleteScorerM = useMutation({
+    mutationFn: removeScorer,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["my-scorers"] });
+      toast.success("Modelo eliminado");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Error"),
+  });
+
+  // ---- Calendario económico (feed público) ----
+  const econQ = useQuery({
+    queryKey: ["econ-calendar"],
+    queryFn: async () => {
+      const res = await fetch("/api/public/econ-calendar");
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json() as Promise<{ events: Array<{ timeISO: string; label: string; type: string; source: string }> }>;
+    },
+    staleTime: 60 * 60 * 1000,
+  });
+
+  async function handleScorerFile(engine: string, file: File) {
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text) as {
+        features?: string[]; weights?: number[]; intercept?: number; auc?: number;
+        coef?: number[]; feature_names?: string[]; // formatos alternativos del notebook
+      };
+      const features = json.features ?? json.feature_names ?? [];
+      const weights = json.weights ?? json.coef ?? [];
+      const intercept = json.intercept ?? 0;
+      if (!features.length || features.length !== weights.length) {
+        toast.error("JSON inválido: features y weights deben coincidir");
+        return;
+      }
+      uploadScorerM.mutate({ data: { engine, features, weights, intercept, auc: json.auc } });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "JSON inválido");
+    }
+  }
 
   function save(e: React.FormEvent) {
     e.preventDefault();
@@ -391,6 +449,94 @@ function SettingsPage() {
             <Button type="submit" disabled={m.isPending}>{m.isPending ? "Guardando..." : "Guardar cambios"}</Button>
           </div>
         </form>
+
+        <div className="mt-6 space-y-6">
+          <Section title="Filtro económico (macro)" subtitle="Bloquea automáticamente el envío de señales alrededor de eventos de alto impacto USD (FOMC, NFP, CPI, etc.). Fuente: feed gratuito ForexFactory + fallback interno.">
+            <Field label="Activar filtro" hint="Cuando está activo, las señales generadas dentro de la ventana no se envían al EA ni a Telegram.">
+              <Switch
+                checked={form.econ_filter_enabled}
+                onCheckedChange={(v) => setForm({ ...form, econ_filter_enabled: v })}
+              />
+            </Field>
+            <Field label="Ventana ± minutos" hint="Se ignoran señales que caigan dentro de N minutos antes o después del evento.">
+              <select
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={form.econ_filter_window_min}
+                onChange={(e) => setForm({ ...form, econ_filter_window_min: parseInt(e.target.value) || 30 })}
+              >
+                <option value={15}>15 min</option>
+                <option value={30}>30 min</option>
+                <option value={60}>60 min</option>
+                <option value={120}>120 min</option>
+              </select>
+            </Field>
+            <div className="text-xs text-muted-foreground rounded-md border border-border bg-background/50 p-3 space-y-1.5">
+              <p className="font-semibold text-foreground">Próximos eventos high-impact USD</p>
+              {econQ.isLoading ? (
+                <p>Cargando calendario…</p>
+              ) : econQ.data && econQ.data.events.length ? (
+                <ul className="space-y-1">
+                  {econQ.data.events.slice(0, 6).map((ev, i) => (
+                    <li key={i} className="font-mono">
+                      <span className="text-foreground">{new Date(ev.timeISO).toLocaleString()}</span>
+                      {" · "}
+                      <span>{ev.label}</span>
+                      <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-background/60">{ev.source}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No hay eventos próximos. Se usará el fallback interno (FOMC/NFP hardcodeados).</p>
+              )}
+            </div>
+          </Section>
+
+          <Section title="Modelos ML (re-scoring por estrategia)" subtitle="Sube los ml_filters_*.json entrenados en el notebook Colab/Kaggle. Cada modelo re-puntúa las señales de su estrategia y descarta las de baja probabilidad.">
+            <div className="space-y-2">
+              {listStrategies().map((s) => {
+                const scorer = scorersQ.data?.find((x) => x.engine === s.key);
+                return (
+                  <div key={s.key} className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{s.shortName}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {scorer
+                          ? `${scorer.features.length} features · AUC ${scorer.auc ? Number(scorer.auc).toFixed(2) : "—"} · entrenado ${new Date(scorer.trained_at).toLocaleDateString()}`
+                          : "Sin modelo cargado — la estrategia usa reglas heurísticas."}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <label className="cursor-pointer">
+                        <span className="inline-flex items-center px-3 h-8 rounded-md border border-border text-xs hover:bg-background/70">
+                          Subir JSON
+                        </span>
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleScorerFile(s.key, f);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      {scorer && (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => deleteScorerM.mutate({ data: { engine: s.key } })}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Formato esperado: <code>{`{ features: string[], weights: number[], intercept: number, auc?: number }`}</code>.
+              También acepta <code>coef</code> / <code>feature_names</code> como alias.
+            </p>
+          </Section>
+        </div>
       </main>
     </div>
   );

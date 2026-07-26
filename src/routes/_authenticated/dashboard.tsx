@@ -14,7 +14,7 @@ import { SessionClock } from "@/components/SessionClock";
 import { Button } from "@/components/ui/button";
 import { Settings, LogOut, RefreshCw, BarChart3, AlertTriangle, History } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { getTodayEvents, getNextEvent } from "@/lib/economic-calendar";
+import { getTodayEvents, getNextFallbackEvent } from "@/lib/economic-calendar";
 import { listStrategies, STRATEGIES } from "@/lib/strategies";
 import type { Signal } from "@/lib/signal-engine";
 
@@ -86,7 +86,7 @@ function Dashboard() {
   const m15Trend = data && data.m15.length ? detectTrend(data.m15) : "ranging";
 
   const todayEvents = useMemo(() => getTodayEvents(), []);
-  const nextEvent = useMemo(() => getNextEvent(), []);
+  const nextEvent = useMemo(() => getNextFallbackEvent(), []);
 
   const setupHighlights = signal ? [
     { price: signal.entry, color: "#f0b929", label: "Entry" },
@@ -147,12 +147,12 @@ function Dashboard() {
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-400" />
             <strong className="text-amber-300">Hoy:</strong>
-            <span>{todayEvents.map((e) => `${e.label} (~${e.timeUTC} UTC)`).join(" · ")}</span>
+            <span>{todayEvents.map((e) => `${e.label} (~${e.timeISO.slice(11,16)} UTC)`).join(" · ")}</span>
             <span className="text-xs text-muted-foreground ml-auto">Evitar entradas 1h antes y 30min después.</span>
           </div>
         ) : nextEvent ? (
           <div className="text-xs text-muted-foreground">
-            Próximo evento macro: <strong className="text-foreground">{nextEvent.label}</strong> el {nextEvent.date} (~{nextEvent.timeUTC} UTC)
+            Próximo evento macro: <strong className="text-foreground">{nextEvent.label}</strong> el {nextEvent.date} (~{nextEvent.timeISO.slice(11,16)} UTC)
           </div>
         ) : null}
 

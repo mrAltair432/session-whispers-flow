@@ -3,6 +3,9 @@ import { STRATEGIES, listStrategies, type EngineKey } from "@/lib/strategies";
 import { aggregateCandles, type TfKey } from "@/lib/csv-parser";
 import type { Candle } from "@/lib/analysis";
 import type { Signal } from "@/lib/signal-engine";
+import { fetchUpcomingEvents, findBlockingEvent } from "@/lib/economic-calendar";
+import { detectRegime, isRegimeFriendly } from "@/lib/market-regime";
+import { predictProb, scorerVerdict, type ScorerModel } from "@/lib/ml-scorer";
 
 // Server-side cron: evalúa E1/E2/E3 sin necesidad de que el usuario tenga el
 // dashboard abierto. Se llama cada 15 min desde pg_cron durante horario de
@@ -92,6 +95,9 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
           return Response.json({ ok: true, skipped: "outside-market-hours" });
         }
 
+        // --- #6 Filtro económico: cargar calendario global (cacheado 6h)
+        const econEvents = await fetchUpcomingEvents().catch(() => []);
+
         // Multi-TF: M1, M15, H1, H4, D1. M5 se agrega desde M1.
         let bars: Partial<Record<TfKey, Candle[]>> = {};
         try {
@@ -114,7 +120,7 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
         // Usuarios con telegram habilitado
         const { data: users, error: usersErr } = await supabaseAdmin
           .from("user_config")
-          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, mt5_enabled_engines, balance, risk_per_trade")
+          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, mt5_enabled_engines, balance, risk_per_trade, econ_filter_enabled, econ_filter_window_min")
           .eq("telegram_enabled", true)
           .not("telegram_chat_id", "is", null);
         if (usersErr) return Response.json({ error: usersErr.message }, { status: 500 });
@@ -132,6 +138,46 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
           for (const row of sp ?? []) {
             paramsByUE.set(`${row.user_id}:${row.engine_key}`, (row.params ?? {}) as Record<string, unknown>);
           }
+        }
+
+        // --- #2 ML scorers por (user, engine)
+        const scorersByUE = new Map<string, ScorerModel>();
+        if (userIds.length) {
+          const { data: scs } = await supabaseAdmin
+            .from("ml_scorers")
+            .select("user_id, engine, features, weights, intercept, auc")
+            .in("user_id", userIds);
+          for (const row of scs ?? []) {
+            scorersByUE.set(`${row.user_id}:${row.engine}`, {
+              engine: row.engine,
+              features: row.features as string[],
+              weights: row.weights as number[],
+              intercept: Number(row.intercept ?? 0),
+              auc: row.auc ?? undefined,
+            });
+          }
+        }
+
+        // --- #3 Régimen actual (H1) — común a todos los usuarios
+        const regimeInfo = bars.H1 && bars.H1.length >= 60 ? detectRegime(bars.H1) : null;
+
+        // Features base para el ML re-scoring (ampliables por estrategia)
+        function buildFeatures(sig: NonNullable<Signal>): Record<string, number> {
+          const feats: Record<string, number> = {};
+          feats.score = sig.score;
+          feats.confidence_high = sig.confidence === "high" ? 1 : 0;
+          feats.bias_long = sig.bias === "long" ? 1 : 0;
+          if (regimeInfo) {
+            feats.adx = regimeInfo.adx;
+            feats.atr_pct = regimeInfo.atrPct;
+            feats.ema_slope_pct = regimeInfo.emaSlopePct;
+            feats.regime_trend = regimeInfo.regime === "trend_up" || regimeInfo.regime === "trend_down" ? 1 : 0;
+            feats.regime_range = regimeInfo.regime === "range" ? 1 : 0;
+            feats.regime_high_vol = regimeInfo.regime === "high_vol" ? 1 : 0;
+          }
+          feats.hour_utc = now.getUTCHours();
+          feats.dow = now.getUTCDay();
+          return feats;
         }
 
         // Bucket horario (para dedupe): truncar a la hora
@@ -167,10 +213,45 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
           let signalsCount = 0;
           let sent = 0;
           for (const u of users ?? []) {
+            // --- #6 Filtro económico por usuario (respeta su configuración)
+            const econEnabled = (u as { econ_filter_enabled?: boolean }).econ_filter_enabled ?? true;
+            const econWindow = (u as { econ_filter_window_min?: number }).econ_filter_window_min ?? 30;
+            if (econEnabled && econEvents.length) {
+              const blocker = findBlockingEvent(econEvents, now, econWindow);
+              if (blocker) continue; // saltar señal para este usuario
+            }
+
             const userParams = paramsByUE.get(`${u.user_id}:${key}`);
             const mergedParams = { ...strat.defaultParams, ...(userParams ?? {}) };
-            const signal = resolveSignal(mergedParams);
-            if (!signal) continue;
+            const rawSignal = resolveSignal(mergedParams);
+            if (!rawSignal) continue;
+            // Trabajamos con un tipo NonNullable para no arrastrar `| null`
+            type NonNullSignal = NonNullable<Signal>;
+            let signal: NonNullSignal = rawSignal;
+
+            // --- #3 Régimen: si el régimen no encaja con la estrategia, degradamos confianza.
+            let regimeDowngrade = false;
+            if (regimeInfo && !isRegimeFriendly(key, regimeInfo.regime)) {
+              if (signal.confidence === "medium") continue; // ya débil + mal régimen → descartar
+              signal = { ...signal, confidence: "medium" };
+              regimeDowngrade = true;
+            }
+
+            // --- #2 ML re-scoring (si hay scorer entrenado para este motor)
+            const scorer = scorersByUE.get(`${u.user_id}:${key}`);
+            let pWin: number | null = null;
+            if (scorer) {
+              const feats = buildFeatures(signal);
+              pWin = predictProb(scorer, feats);
+              const verdict = scorerVerdict(pWin);
+              if (verdict === "reject") continue;
+              if (verdict === "medium" && signal.confidence === "high") {
+                signal = { ...signal, confidence: "medium" };
+              } else if (verdict === "high" && signal.confidence === "medium" && !regimeDowngrade) {
+                signal = { ...signal, confidence: "high" };
+              }
+            }
+
             signalsCount++;
             // Insert dedupado: (user_id, engine, bias, bucket_hour) unique
             const { data: inserted, error: insErr } = await supabaseAdmin
@@ -188,6 +269,14 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
                 tp3: signal.tp3 ?? null,
                 reasoning: signal.reasoning as never,
                 bucket_hour: bucketHour,
+                metadata: {
+                  regime: regimeInfo?.regime ?? null,
+                  adx: regimeInfo?.adx ?? null,
+                  atr_pct: regimeInfo?.atrPct ?? null,
+                  regime_downgrade: regimeDowngrade,
+                  p_win: pWin,
+                  scorer_auc: scorer?.auc ?? null,
+                } as never,
               })
               .select()
               .single();
