@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getEngineStats, getRecentSignals } from "@/lib/history.functions";
+import { getMyRealTrades, type RealTradeRow } from "@/lib/mt5.functions";
 import { STRATEGIES, type EngineKey } from "@/lib/strategies";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, TrendingUp, TrendingDown, Minus } from "lucide-react";
