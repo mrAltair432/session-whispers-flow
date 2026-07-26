@@ -4,7 +4,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import { getMyConfig, updateMyConfig } from "@/lib/config.functions";
 import { sendTelegramTest } from "@/lib/setups.functions";
-import { getMyEaToken, rotateMyEaToken, deleteMyEaToken, getMyMt5Diagnostics } from "@/lib/mt5.functions";
+import { getMyEaToken, rotateMyEaToken, deleteMyEaToken, getMyMt5Diagnostics, getMyEngineHealth } from "@/lib/mt5.functions";
 import { listStrategies } from "@/lib/strategies";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
