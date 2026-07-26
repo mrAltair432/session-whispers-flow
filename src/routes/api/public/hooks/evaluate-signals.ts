@@ -225,29 +225,32 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
 
             const userParams = paramsByUE.get(`${u.user_id}:${key}`);
             const mergedParams = { ...strat.defaultParams, ...(userParams ?? {}) };
-            let signal = resolveSignal(mergedParams);
-            if (!signal) continue;
+            const rawSignal = resolveSignal(mergedParams);
+            if (!rawSignal) continue;
+            // Trabajamos con un tipo NonNullable para no arrastrar `| null`
+            type NonNullSignal = NonNullable<Signal>;
+            let signal: NonNullSignal = rawSignal;
 
             // --- #3 Régimen: si el régimen no encaja con la estrategia, degradamos confianza.
             let regimeDowngrade = false;
             if (regimeInfo && !isRegimeFriendly(key, regimeInfo.regime)) {
               if (signal.confidence === "medium") continue; // ya débil + mal régimen → descartar
-              signal = { ...signal, confidence: "medium" } as Signal;
+              signal = { ...signal, confidence: "medium" };
               regimeDowngrade = true;
             }
 
             // --- #2 ML re-scoring (si hay scorer entrenado para este motor)
             const scorer = scorersByUE.get(`${u.user_id}:${key}`);
             let pWin: number | null = null;
-            if (scorer && signal) {
-              const feats = buildFeatures(signal as Signal & object);
+            if (scorer) {
+              const feats = buildFeatures(signal);
               pWin = predictProb(scorer, feats);
               const verdict = scorerVerdict(pWin);
               if (verdict === "reject") continue;
               if (verdict === "medium" && signal.confidence === "high") {
-                signal = { ...signal, confidence: "medium" } as Signal;
+                signal = { ...signal, confidence: "medium" };
               } else if (verdict === "high" && signal.confidence === "medium" && !regimeDowngrade) {
-                signal = { ...signal, confidence: "high" } as Signal;
+                signal = { ...signal, confidence: "high" };
               }
             }
 
@@ -258,15 +261,15 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
               .insert({
                 user_id: u.user_id,
                 engine: key,
-                bias: signal!.bias,
-                score: signal!.score,
-                confidence: signal!.confidence,
-                entry: signal!.entry,
-                stop_loss: signal!.stopLoss,
-                tp1: signal!.tp1,
-                tp2: signal!.tp2,
-                tp3: signal!.tp3 ?? null,
-                reasoning: signal!.reasoning as never,
+                bias: signal.bias,
+                score: signal.score,
+                confidence: signal.confidence,
+                entry: signal.entry,
+                stop_loss: signal.stopLoss,
+                tp1: signal.tp1,
+                tp2: signal.tp2,
+                tp3: signal.tp3 ?? null,
+                reasoning: signal.reasoning as never,
                 bucket_hour: bucketHour,
                 metadata: {
                   regime: regimeInfo?.regime ?? null,
