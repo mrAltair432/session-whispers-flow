@@ -1,17 +1,23 @@
-// Eventos macroeconómicos de alto impacto para XAU/USD.
-// Fechas en formato YYYY-MM-DD (UTC). FOMC = decisión de tasas Fed.
-// NFP = primer viernes del mes (Non-Farm Payrolls) a las 12:30 UTC.
-// Lista verificada para 2025-2026. Actualizar manualmente al inicio de cada año.
+// Calendario económico de alto impacto para XAU/USD.
+// Combina dos fuentes:
+//   1. Feed gratuito ForexFactory (https://nfs.faireconomy.media/ff_calendar_thisweek.json).
+//   2. Fallback hardcodeado (FOMC/NFP) por si el feed no responde.
+// Los eventos se filtran a USD + impacto alto (los que mueven Gold).
 
 export type EconEvent = {
-  date: string;        // YYYY-MM-DD UTC
-  type: "FOMC" | "NFP" | "CPI";
+  /** ISO 8601 UTC de cuando ocurre el evento (con hora si el feed la da). */
+  timeISO: string;
+  /** YYYY-MM-DD UTC (derivado, para búsquedas por día). */
+  date: string;
+  type: "FOMC" | "NFP" | "CPI" | "OTHER";
   label: string;
-  timeUTC?: string;    // HH:MM aproximado
+  impact: "high" | "medium" | "low";
+  country: string;
+  source: "forexfactory" | "fallback";
 };
 
 // FOMC oficial Fed (decisión de tasas)
-const FOMC: string[] = [
+const FOMC_DATES: string[] = [
   // 2025
   "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
   "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
@@ -35,33 +41,137 @@ function buildNFPs(year: number): string[] {
   return out;
 }
 
-const NFP: string[] = [...buildNFPs(2025), ...buildNFPs(2026)];
+const NFP_DATES: string[] = [...buildNFPs(2025), ...buildNFPs(2026)];
 
-export const ECON_EVENTS: EconEvent[] = [
-  ...FOMC.map((date) => ({ date, type: "FOMC" as const, label: "FOMC (Fed)", timeUTC: "18:00" })),
-  ...NFP.map((date) => ({ date, type: "NFP" as const, label: "NFP (Empleo USA)", timeUTC: "12:30" })),
-];
-
-const EVENT_MAP = new Map<string, EconEvent[]>();
-for (const e of ECON_EVENTS) {
-  const arr = EVENT_MAP.get(e.date) ?? [];
-  arr.push(e);
-  EVENT_MAP.set(e.date, arr);
+function fallbackEvents(): EconEvent[] {
+  const out: EconEvent[] = [];
+  for (const date of FOMC_DATES) {
+    out.push({
+      timeISO: `${date}T18:00:00Z`,
+      date,
+      type: "FOMC",
+      label: "FOMC (Fed)",
+      impact: "high",
+      country: "USD",
+      source: "fallback",
+    });
+  }
+  for (const date of NFP_DATES) {
+    out.push({
+      timeISO: `${date}T12:30:00Z`,
+      date,
+      type: "NFP",
+      label: "NFP (Empleo USA)",
+      impact: "high",
+      country: "USD",
+      source: "fallback",
+    });
+  }
+  return out;
 }
 
-export function getEventsForDate(d: Date): EconEvent[] {
-  const key = d.toISOString().slice(0, 10);
-  return EVENT_MAP.get(key) ?? [];
+// ------------- Feed remoto (ForexFactory JSON gratuito) -------------
+
+type FFEntry = {
+  title: string;
+  country: string;
+  date: string;      // ISO con offset (ej: "2024-01-05T08:30:00-05:00")
+  impact: string;    // "High" | "Medium" | "Low" | "Holiday"
+};
+
+const FF_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+type CacheEntry = { at: number; events: EconEvent[] };
+let CACHE: CacheEntry | null = null;
+
+function classify(title: string): EconEvent["type"] {
+  const t = title.toLowerCase();
+  if (t.includes("fomc") || t.includes("federal funds") || t.includes("fed chair")) return "FOMC";
+  if (t.includes("non-farm") || t.includes("nonfarm") || t.includes("nfp")) return "NFP";
+  if (t.includes("cpi") || t.includes("consumer price")) return "CPI";
+  return "OTHER";
 }
 
-export function getTodayEvents(): EconEvent[] {
-  return getEventsForDate(new Date());
+async function fetchForexFactory(): Promise<EconEvent[]> {
+  const res = await fetch(FF_URL, {
+    headers: { "User-Agent": "Mozilla/5.0 (Lovable Trading Compass)" },
+  });
+  if (!res.ok) throw new Error(`FF ${res.status}`);
+  const raw = (await res.json()) as FFEntry[];
+  return raw
+    .filter((e) => e.country === "USD" && e.impact?.toLowerCase() === "high")
+    .map((e) => {
+      const d = new Date(e.date);
+      const iso = d.toISOString();
+      return {
+        timeISO: iso,
+        date: iso.slice(0, 10),
+        type: classify(e.title),
+        label: e.title,
+        impact: "high" as const,
+        country: "USD",
+        source: "forexfactory" as const,
+      };
+    });
 }
 
-export function getNextEvent(from: Date = new Date()): EconEvent | null {
-  const today = from.toISOString().slice(0, 10);
-  const upcoming = ECON_EVENTS
-    .filter((e) => e.date >= today)
-    .sort((a, b) => a.date.localeCompare(b.date));
-  return upcoming[0] ?? null;
+/** Devuelve el calendario combinado (feed remoto + fallback). Cachea 6h. */
+export async function fetchUpcomingEvents(): Promise<EconEvent[]> {
+  const now = Date.now();
+  if (CACHE && now - CACHE.at < CACHE_TTL_MS) return CACHE.events;
+  const fallback = fallbackEvents();
+  try {
+    const remote = await fetchForexFactory();
+    // dedupe por (date + type + label)
+    const seen = new Set<string>();
+    const merged: EconEvent[] = [];
+    for (const e of [...remote, ...fallback]) {
+      const k = `${e.date}|${e.type}|${e.label}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      merged.push(e);
+    }
+    merged.sort((a, b) => a.timeISO.localeCompare(b.timeISO));
+    CACHE = { at: now, events: merged };
+    return merged;
+  } catch (err) {
+    console.warn("[econ-calendar] feed failed, using fallback:", (err as Error).message);
+    const sorted = [...fallback].sort((a, b) => a.timeISO.localeCompare(b.timeISO));
+    // caché corta para reintentar antes
+    CACHE = { at: now - (CACHE_TTL_MS - 15 * 60 * 1000), events: sorted };
+    return sorted;
+  }
+}
+
+/** Sync: sólo fallback. Útil para UI o casos donde no queremos await. */
+export function getFallbackEvents(): EconEvent[] {
+  return fallbackEvents().sort((a, b) => a.timeISO.localeCompare(b.timeISO));
+}
+
+/**
+ * ¿`now` cae dentro de ±`windowMinutes` de algún evento high-impact USD?
+ * Devuelve el evento en cuestión o null.
+ */
+export function findBlockingEvent(
+  events: EconEvent[],
+  now: Date,
+  windowMinutes: number,
+): EconEvent | null {
+  const nowMs = now.getTime();
+  const win = windowMinutes * 60 * 1000;
+  for (const e of events) {
+    if (e.impact !== "high") continue;
+    const t = new Date(e.timeISO).getTime();
+    if (Math.abs(t - nowMs) <= win) return e;
+  }
+  return null;
+}
+
+export function getNextEvent(events: EconEvent[], from: Date = new Date()): EconEvent | null {
+  const nowMs = from.getTime();
+  for (const e of events) {
+    if (new Date(e.timeISO).getTime() >= nowMs) return e;
+  }
+  return null;
 }
