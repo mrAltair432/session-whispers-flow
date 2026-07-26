@@ -114,7 +114,7 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
         // Usuarios con telegram habilitado
         const { data: users, error: usersErr } = await supabaseAdmin
           .from("user_config")
-          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, balance, risk_per_trade")
+          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, mt5_enabled_engines, balance, risk_per_trade")
           .eq("telegram_enabled", true)
           .not("telegram_chat_id", "is", null);
         if (usersErr) return Response.json({ error: usersErr.message }, { status: 500 });
@@ -205,7 +205,9 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
               (u as { mt5_auto_route_enabled?: boolean }).mt5_auto_route_enabled &&
               ((u as { mt5_min_confidence?: string }).mt5_min_confidence === "medium" ||
                 signal.confidence === "high");
-            if (meetsMt5) {
+            const enabledEngines = (u as { mt5_enabled_engines?: string[] | null }).mt5_enabled_engines;
+            const engineAllowed = !enabledEngines || enabledEngines.length === 0 || enabledEngines.includes(key);
+            if (meetsMt5 && engineAllowed) {
               const { data: tok } = await supabaseAdmin
                 .from("mt5_ea_tokens")
                 .select("id")
