@@ -132,6 +132,15 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
         if (!sig || sig.user_id !== tok.user_id) return json({ error: "signal not found" }, 404);
 
         const nowIso = new Date().toISOString();
+
+        // Normalizar R efectivo del cierre lo antes posible.
+        let effectiveR = parsed.data.r_multiple ?? 0;
+        if (effectiveR === 0 && typeof parsed.data.pnl_usd === "number" && sig.risk_usd && Number(sig.risk_usd) > 0) {
+          effectiveR = parsed.data.pnl_usd / Number(sig.risk_usd);
+        }
+        const isLoss = (typeof parsed.data.r_multiple === "number" && parsed.data.r_multiple < -0.05)
+          || (typeof parsed.data.pnl_usd === "number" && parsed.data.pnl_usd < 0);
+
         const patch: {
           status?: string;
           filled_at?: string;
