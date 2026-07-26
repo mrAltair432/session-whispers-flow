@@ -126,7 +126,7 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
         // Verifica pertenencia
         const { data: sig } = await supabaseAdmin
           .from("mt5_signals")
-          .select("id, user_id, status, signal_event_id, engine, entry, stop_loss, bias")
+          .select("id, user_id, status, signal_event_id, engine, entry, stop_loss, bias, risk_usd")
           .eq("id", parsed.data.signal_id)
           .maybeSingle();
         if (!sig || sig.user_id !== tok.user_id) return json({ error: "signal not found" }, 404);
