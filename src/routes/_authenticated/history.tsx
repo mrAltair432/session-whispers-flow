@@ -80,6 +80,67 @@ function HistoryPage() {
           )}
         </section>
 
+        {/* Operaciones reales MT5 */}
+        <section>
+          <h2 className="text-sm font-semibold text-muted-foreground mb-2">Operaciones reales MT5</h2>
+          <div className="rounded-lg border border-border overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/40 text-muted-foreground">
+                <tr>
+                  <th className="text-left px-3 py-2">Fecha</th>
+                  <th className="text-left px-3 py-2">Estrategia</th>
+                  <th className="text-left px-3 py-2">Bias</th>
+                  <th className="text-right px-3 py-2">Entry</th>
+                  <th className="text-right px-3 py-2">SL</th>
+                  <th className="text-right px-3 py-2">TP1</th>
+                  <th className="text-center px-3 py-2">Estado</th>
+                  <th className="text-right px-3 py-2">Cierre</th>
+                  <th className="text-right px-3 py-2">R</th>
+                  <th className="text-right px-3 py-2">P&L USD</th>
+                  <th className="text-center px-3 py-2">Ticket</th>
+                </tr>
+              </thead>
+              <tbody>
+                {realTrades.length === 0 ? (
+                  <tr><td colSpan={11} className="px-3 py-8 text-center text-muted-foreground">Aún no hay operaciones reales reportadas por el EA.</td></tr>
+                ) : realTrades.map((t: RealTradeRow) => (
+                  <tr key={t.id} className="border-t border-border/60">
+                    <td className="px-3 py-1.5 whitespace-nowrap">{fmtDate(t.created_at)}</td>
+                    <td className="px-3 py-1.5">{engineLabel(t.engine)}</td>
+                    <td className={`px-3 py-1.5 font-medium ${t.bias === "long" ? "text-emerald-400" : "text-red-400"}`}>{t.bias.toUpperCase()}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">{Number(t.entry).toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">{Number(t.stop_loss).toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right font-mono">{Number(t.tp1).toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-center">
+                      <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                        t.status === "closed" ? "bg-muted text-muted-foreground"
+                        : t.status === "filled" ? "bg-amber-500/20 text-amber-400"
+                        : "bg-red-500/20 text-red-400"
+                      }`}>{t.status}</span>
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      {t.closed_reason ? (
+                        <span className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                          t.closed_reason.startsWith("tp") ? "bg-emerald-500/20 text-emerald-400"
+                          : t.closed_reason === "sl" ? "bg-red-500/20 text-red-400"
+                          : "bg-muted text-muted-foreground"
+                        }`}>{t.closed_reason}</span>
+                      ) : <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className={`px-3 py-1.5 text-right font-mono ${t.r_multiple && Number(t.r_multiple) > 0 ? "text-emerald-400" : t.r_multiple && Number(t.r_multiple) < 0 ? "text-red-400" : ""}`}>
+                      {t.r_multiple !== null ? `${Number(t.r_multiple) >= 0 ? "+" : ""}${Number(t.r_multiple).toFixed(2)}` : "—"}
+                    </td>
+                    <td className={`px-3 py-1.5 text-right font-mono ${t.pnl_usd && Number(t.pnl_usd) > 0 ? "text-emerald-400" : t.pnl_usd && Number(t.pnl_usd) < 0 ? "text-red-400" : ""}`}>
+                      {t.pnl_usd !== null ? `${Number(t.pnl_usd) >= 0 ? "+" : ""}${Number(t.pnl_usd).toFixed(2)}` : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-center font-mono text-muted-foreground">{t.mt5_ticket ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         {/* Tabla de últimas señales */}
         <section>
           <h2 className="text-sm font-semibold text-muted-foreground mb-2">Últimas 100 señales</h2>
