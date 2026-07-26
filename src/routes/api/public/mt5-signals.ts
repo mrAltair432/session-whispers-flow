@@ -154,7 +154,8 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
           patch.closed_at = nowIso;
           if (parsed.data.exit_price !== undefined) patch.exit_price = parsed.data.exit_price;
           if (parsed.data.pnl_usd !== undefined) patch.pnl_usd = parsed.data.pnl_usd;
-          if (parsed.data.r_multiple !== undefined) patch.r_multiple = parsed.data.r_multiple;
+          // r_multiple siempre se normaliza para tener R efectivo disponible.
+          patch.r_multiple = effectiveR;
           if (parsed.data.closed_reason !== undefined) patch.closed_reason = parsed.data.closed_reason;
         } else {
           patch.status = "error";
