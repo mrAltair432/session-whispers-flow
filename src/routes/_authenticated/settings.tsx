@@ -79,6 +79,12 @@ function SettingsPage() {
     queryFn: () => fetchMt5Diag(),
     refetchInterval: 8000,
   });
+  const fetchHealth = useServerFn(getMyEngineHealth);
+  const healthQ = useQuery({
+    queryKey: ["my-engine-health"],
+    queryFn: () => fetchHealth(),
+    refetchInterval: 15_000,
+  });
   const [freshToken, setFreshToken] = useState<string | null>(null);
   const rotateM = useMutation({
     mutationFn: () => rotateEa(),
