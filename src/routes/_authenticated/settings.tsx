@@ -239,6 +239,44 @@ function SettingsPage() {
             </div>
 
             <div className="border-t border-border pt-4 space-y-3">
+              <div>
+                <Label className="text-sm">Salud de estrategias (kill-switch)</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  El sistema desconecta automáticamente una estrategia del EA si acumula −3R en los últimos 20 trades o 5 SL consecutivos. Puedes volver a activarla manualmente con el switch de arriba.
+                </p>
+              </div>
+              <div className="space-y-2">
+                {healthQ.data && healthQ.data.length > 0 ? (
+                  healthQ.data.map((h) => (
+                    <div key={h.engine} className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {(() => {
+                            const s = listStrategies().find((x) => x.key === h.engine);
+                            return s ? s.shortName : h.engine;
+                          })()}
+                          {h.disabled_at && (
+                            <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-mono">DESACTIVADA</span>
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {h.disabled_at
+                            ? `Kill-switch: ${h.disabled_reason}`
+                            : `R acumulado (últ. 20): ${Number(h.total_r).toFixed(2)}R · SL consecutivos: ${h.consecutive_losses}`}
+                        </p>
+                      </div>
+                      <div className={`text-xs font-mono ${Number(h.total_r) < -1.5 ? "text-red-400" : "text-emerald-400"}`}>
+                        {h.total_closed} cerradas
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">Aún no hay datos de salud. Se generan automáticamente cuando el EA reporta cierres reales.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t border-border pt-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
                   <Label className="text-sm">Token del EA</Label>
