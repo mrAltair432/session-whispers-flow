@@ -1,7 +1,9 @@
 //+------------------------------------------------------------------+
-//|  LovableBridge.mq5  —  EA "puente tonto" v0.12                   |
+//|  LovableBridge.mq5  —  EA "puente tonto" v0.13                   |
 //|  Ejecuta las señales que publica el dashboard en la tabla        |
 //|  mt5_signals. NO decide nada por sí mismo.                       |
+//|  Ahora también reporta cierres reales (SL, TP, manual) para que    |
+//|  el dashboard calcule P&L y WinRate con datos reales de MT5.       |
 //|                                                                  |
 //|  Instalación (una sola vez):                                     |
 //|   1) MT5 → File → Open Data Folder → MQL5/Experts/                |
@@ -14,7 +16,7 @@
 //|   4) En la pestaña "Inputs" pegar el token del EA.                |
 //+------------------------------------------------------------------+
 #property copyright "Lovable"
-#property version   "0.120"
+#property version   "0.130"
 #property strict
 
 input string InpBaseUrl      = "https://session-whispers-flow.lovable.app";
@@ -29,6 +31,18 @@ input bool   InpDiagnosticOnInit = true;              // Prueba conexión/token 
 #include <Trade\Trade.mqh>
 CTrade trade;
 
+struct TradeRecord {
+   long    ticket;
+   string  signal_id;
+   double  lots;
+   double  entry;
+   double  sl;
+   double  tp1;
+   string  bias;
+   bool    reported;
+};
+
+TradeRecord g_trades[];
 datetime g_lastPoll = 0;
 int g_emptyPolls = 0;
 
@@ -45,7 +59,7 @@ int OnInit()
    if(StringLen(InpEaToken) < 8)
    { Alert("LovableBridge: token EA vacío. Pega el token en inputs."); return(INIT_FAILED); }
    EventSetTimer(MathMax(1, InpPollSeconds));
-   Print("LovableBridge v0.12 iniciado. BaseUrl=", InpBaseUrl, " Symbol=", InpSymbol, " Poll=", InpPollSeconds, "s");
+   Print("LovableBridge v0.13 iniciado. BaseUrl=", InpBaseUrl, " Symbol=", InpSymbol, " Poll=", InpPollSeconds, "s");
    if(InpDiagnosticOnInit) DiagnosticPing();
    PollAndExecute();
    return(INIT_SUCCEEDED);
@@ -55,6 +69,7 @@ void OnDeinit(const int reason) { EventKillTimer(); }
 
 void OnTimer()
 {
+   CheckClosedTrades();
    if(TimeCurrent() - g_lastPoll < InpPollSeconds) return;
    g_lastPoll = TimeCurrent();
    PollAndExecute();
@@ -187,7 +202,82 @@ void PollAndExecute()
 
    ulong ticket = trade.ResultOrder();
    ReportFilled(id, (long)ticket, execPrice);
+   AddTradeRecord((long)ticket, id, lots, execPrice, sl, tp1, bias);
    PrintFormat("Ejecutada señal %s → ticket=%I64u lots=%.2f", id, ticket, lots);
+}
+
+void AddTradeRecord(long ticket, string signal_id, double lots, double entry, double sl, double tp1, string bias)
+{
+   int n = ArraySize(g_trades);
+   ArrayResize(g_trades, n + 1);
+   g_trades[n].ticket = ticket;
+   g_trades[n].signal_id = signal_id;
+   g_trades[n].lots = lots;
+   g_trades[n].entry = entry;
+   g_trades[n].sl = sl;
+   g_trades[n].tp1 = tp1;
+   g_trades[n].bias = bias;
+   g_trades[n].reported = false;
+}
+
+void CheckClosedTrades()
+{
+   if(ArraySize(g_trades) == 0) return;
+   if(!HistorySelect(0, TimeCurrent())) return;
+
+   for(int i = ArraySize(g_trades) - 1; i >= 0; i--)
+   {
+      TradeRecord rec = g_trades[i];
+      if(rec.reported) { ArrayRemove(g_trades, i, 1); continue; }
+
+      // ¿Aún abierta?
+      if(PositionSelectByTicket((ulong)rec.ticket)) continue;
+
+      // Buscar el deal de cierre en el historial
+      bool found = false;
+      for(int d = HistoryDealsTotal() - 1; d >= 0; d--)
+      {
+         ulong dealTicket = HistoryDealGetTicket(d);
+         if(dealTicket == 0) continue;
+         long posId = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+         if(posId != rec.ticket) continue;
+
+         double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+         double swap   = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+         double comm   = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+         double pnlUsd = profit + swap + comm;
+         double exitPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+         long reason = HistoryDealGetInteger(dealTicket, DEAL_REASON);
+
+         string reasonStr = "manual";
+         if(reason == DEAL_REASON_SL) reasonStr = "sl";
+         else if(reason == DEAL_REASON_TP) reasonStr = "tp1";
+         else if(reason == DEAL_REASON_SO) reasonStr = "margin";
+
+         // Calcular R basado en riesgo real del trade
+         double riskUsd = RiskUsdForTrade(rec.entry, rec.sl, rec.lots);
+         double r = (riskUsd > 0 ? pnlUsd / riskUsd : 0);
+
+         ReportClosed(rec.signal_id, rec.ticket, exitPrice, pnlUsd, r, reasonStr);
+         rec.reported = true;
+         g_trades[i].reported = true;
+         found = true;
+         PrintFormat("Señal %s cerrada → ticket=%I64u reason=%s pnl=%.2f r=%.2f", rec.signal_id, rec.ticket, reasonStr, pnlUsd, r);
+         break;
+      }
+
+      if(found) ArrayRemove(g_trades, i, 1);
+   }
+}
+
+double RiskUsdForTrade(double entry, double sl, double lots)
+{
+   double tickVal = SymbolInfoDouble(InpSymbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSz  = SymbolInfoDouble(InpSymbol, SYMBOL_TRADE_TICK_SIZE);
+   if(tickSz <= 0 || tickVal <= 0) return 0;
+   double dist = MathAbs(entry - sl);
+   double lossPerLot = (dist / tickSz) * tickVal;
+   return lossPerLot * lots;
 }
 
 double ComputeLots(double entry, double sl)
@@ -217,10 +307,24 @@ void ReportFilled(string id, long ticket, double price)
    HttpPostJson(url, body);
 }
 
+void ReportClosed(string id, long ticket, double exitPrice, double pnlUsd, double r, string reason)
+{
+   string url = InpBaseUrl + "/api/public/mt5-signals";
+   string reasonEsc = reason;
+   StringReplace(reasonEsc, "\\", "\\\\");
+   StringReplace(reasonEsc, "\"", "\\\"");
+   string body = StringFormat("{\"signal_id\":\"%s\",\"action\":\"closed\",\"mt5_ticket\":%I64d,\"exit_price\":%.2f,\"pnl_usd\":%.2f,\"r_multiple\":%.3f,\"closed_reason\":\"%s\"}",
+                              id, ticket, exitPrice, pnlUsd, r, reasonEsc);
+   HttpPostJson(url, body);
+}
+
 void ReportError(string id, string msg)
 {
    string url = InpBaseUrl + "/api/public/mt5-signals";
-   string body = StringFormat("{\"signal_id\":\"%s\",\"action\":\"error\",\"error_message\":\"%s\"}", id, msg);
+   string msgEsc = msg;
+   StringReplace(msgEsc, "\\", "\\\\");
+   StringReplace(msgEsc, "\"", "\\\"");
+   string body = StringFormat("{\"signal_id\":\"%s\",\"action\":\"error\",\"error_message\":\"%s\"}", id, msgEsc);
    HttpPostJson(url, body);
    Print("Signal ", id, " → ERROR: ", msg);
 }
