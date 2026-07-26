@@ -449,6 +449,94 @@ function SettingsPage() {
             <Button type="submit" disabled={m.isPending}>{m.isPending ? "Guardando..." : "Guardar cambios"}</Button>
           </div>
         </form>
+
+        <div className="mt-6 space-y-6">
+          <Section title="Filtro económico (macro)" subtitle="Bloquea automáticamente el envío de señales alrededor de eventos de alto impacto USD (FOMC, NFP, CPI, etc.). Fuente: feed gratuito ForexFactory + fallback interno.">
+            <Field label="Activar filtro" hint="Cuando está activo, las señales generadas dentro de la ventana no se envían al EA ni a Telegram.">
+              <Switch
+                checked={form.econ_filter_enabled}
+                onCheckedChange={(v) => setForm({ ...form, econ_filter_enabled: v })}
+              />
+            </Field>
+            <Field label="Ventana ± minutos" hint="Se ignoran señales que caigan dentro de N minutos antes o después del evento.">
+              <select
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={form.econ_filter_window_min}
+                onChange={(e) => setForm({ ...form, econ_filter_window_min: parseInt(e.target.value) || 30 })}
+              >
+                <option value={15}>15 min</option>
+                <option value={30}>30 min</option>
+                <option value={60}>60 min</option>
+                <option value={120}>120 min</option>
+              </select>
+            </Field>
+            <div className="text-xs text-muted-foreground rounded-md border border-border bg-background/50 p-3 space-y-1.5">
+              <p className="font-semibold text-foreground">Próximos eventos high-impact USD</p>
+              {econQ.isLoading ? (
+                <p>Cargando calendario…</p>
+              ) : econQ.data && econQ.data.events.length ? (
+                <ul className="space-y-1">
+                  {econQ.data.events.slice(0, 6).map((ev, i) => (
+                    <li key={i} className="font-mono">
+                      <span className="text-foreground">{new Date(ev.timeISO).toLocaleString()}</span>
+                      {" · "}
+                      <span>{ev.label}</span>
+                      <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-background/60">{ev.source}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No hay eventos próximos. Se usará el fallback interno (FOMC/NFP hardcodeados).</p>
+              )}
+            </div>
+          </Section>
+
+          <Section title="Modelos ML (re-scoring por estrategia)" subtitle="Sube los ml_filters_*.json entrenados en el notebook Colab/Kaggle. Cada modelo re-puntúa las señales de su estrategia y descarta las de baja probabilidad.">
+            <div className="space-y-2">
+              {listStrategies().map((s) => {
+                const scorer = scorersQ.data?.find((x) => x.engine === s.key);
+                return (
+                  <div key={s.key} className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{s.shortName}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {scorer
+                          ? `${scorer.features.length} features · AUC ${scorer.auc ? Number(scorer.auc).toFixed(2) : "—"} · entrenado ${new Date(scorer.trained_at).toLocaleDateString()}`
+                          : "Sin modelo cargado — la estrategia usa reglas heurísticas."}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <label className="cursor-pointer">
+                        <span className="inline-flex items-center px-3 h-8 rounded-md border border-border text-xs hover:bg-background/70">
+                          Subir JSON
+                        </span>
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleScorerFile(s.key, f);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      {scorer && (
+                        <Button type="button" variant="ghost" size="sm" onClick={() => deleteScorerM.mutate({ data: { engine: s.key } })}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Formato esperado: <code>{`{ features: string[], weights: number[], intercept: number, auc?: number }`}</code>.
+              También acepta <code>coef</code> / <code>feature_names</code> como alias.
+            </p>
+          </Section>
+        </div>
       </main>
     </div>
   );
