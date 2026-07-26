@@ -1,106 +1,88 @@
-## Objetivo
+Voy a implementar los tres ingredientes en un mismo bloque, cuidando el orden de dependencias (régimen alimenta ML, ML y calendario filtran señales en `signal-engine`).
 
-Cuatro bloques de trabajo en este orden:
+## #6 · Filtro económico automático (feed gratuito)
 
-1. **Exportador MT5 → CSV** (script `.mq5` descargable + parser multi-TF).
-2. **Filtros horarios automáticos** del oro (cierre semanal, gap lunes, avisos FOMC/NFP).
-3. **Multi-estrategia** (tabla `strategies`, selector, comparador, optimizador por estrategia).
-4. **Estrategia 2: Continuación NY** (pullback EMA50 H1 + entrada M15 en killzone NY).
+**Fuente:** Trading Economics calendar (endpoint público JSON, sin API key para high-impact). Fallback: mantiene la lista hardcodeada de FOMC/NFP que ya tenemos.
 
-## 1. Exportador MT5
+- Nueva ruta `src/routes/api/public/econ-calendar.ts` que hace fetch al feed cada llamada con caché en memoria de 6h. Devuelve eventos USD de alto impacto próximos 7 días.
+- Nueva tabla `econ_events_cache` (opcional) para persistir el último snapshot y evitar depender de la red en cada request. Si no se puede refrescar, se usa la caché + los eventos hardcodeados.
+- `src/lib/economic-calendar.ts`: agrego `fetchUpcomingEvents()` (server) y `isBlockedWindow(now, windowMinutes=30)`.
+- `signal-engine.ts`: si `now` está dentro de ±30 min de un evento high-impact USD → señal descartada con motivo `blocked_econ_event`. Configurable con `user_config.econ_filter_enabled` (default true) y `econ_filter_window_min` (default 30).
+- UI en `/settings`: toggle + slider (15/30/60 min) + tabla con próximos 5 eventos.
 
-- Nuevo archivo `public/mt5/XAUUSD_History_Export.mq5` descargable desde la app.
-- Script MQL5 que recorre M1/M5/M15/H1/H4/D1 y escribe un CSV por TF en `MQL5/Files/` con formato:
-  ```
-  Date,Open,High,Low,Close,Volume
-  2015.01.05 03:00,1186.45,1187.20,1186.10,1186.85,12450
-  ```
-- Sección "Datos históricos" en `/backtest` con instrucciones paso a paso y botón de descarga.
+## #3 · Régimen de mercado
 
-### Parser multi-TF
+Detección liviana en tiempo real (sin depender de nueva tabla).
 
-- Extender `src/lib/csv-parser.ts`: aceptar formato MT5 (`YYYY.MM.DD HH:MM`) además del actual (`MM/DD/YYYY HH:MM`).
-- `detectTimeframeMinutes` ya existe; añadir helper `classifyTimeframe(mins) → "M1"|"M5"|"M15"|"H1"|"H4"|"D1"`.
-- En `/backtest`: drop-zone que acepta múltiples CSV simultáneamente, los clasifica y los muestra en una tabla de "datasets cargados" (TF, rango, # velas).
-- Pasar `customM15` y `customH1` además de `customH4` al backtest engine.
+- Nuevo módulo `src/lib/market-regime.ts` con `detectRegime(candles)` que devuelve `{ regime: "trend_up" | "trend_down" | "range" | "high_vol" | "low_vol", adx, atrPct, emaSlope }`.
+  - **trend_up/down**: ADX(14) ≥ 22 + pendiente EMA200 H1 clara.
+  - **range**: ADX < 18 y ancho BB relativo < 0.35%.
+  - **high_vol**: ATR%(14) > percentil 80 histórico.
+  - **low_vol**: ATR%(14) < percentil 20.
+- Se ejecuta en el flujo de `evaluate-signals` y se anexa al `signal_events.metadata` (JSON) para futura correlación.
+- Cada estrategia obtiene una whitelist de regímenes preferidos (config estática):
+  - E1 SMC → trend + high_vol
+  - E2 Alligator → trend
+  - E3 Fibo → range o trend suave
+  - E4 VWAP → range
+  - E6 Straddle → high_vol
+- Si la señal se genera en un régimen no whitelisted → downgrade de confidence (`high`→`medium`, `medium`→descartada si `mt5_min_confidence=high`).
 
-## 2. Filtros horarios automáticos
+## #2 · ML re-scoring online
 
-En `src/lib/backtest.ts` agregar antes del scoring:
+Cimientos ahora, "online" real cuando haya ≥30 trades cerrados por motor.
 
-- **Cierre semanal**: excluir velas con `weekday=5 && hourUTC >= 21` y `weekday=0` completo (sábado).
-- **Pausa diaria**: excluir hora UTC 22 (= 17 NY, mercado cerrado).
-- **Gap lunes**: excluir lunes UTC 0-2 (primeras 2h tras apertura).
-- Toggles en UI para desactivarlos (default ON).
+- Nueva tabla `ml_scorers` (`user_id, engine, weights jsonb, features text[], auc numeric, trained_at`). El notebook Python ya exporta `ml_filters_*.json`; agrego endpoint `POST /api/public/ml-scorers/upload` (token EA-style, opcional) + botón "Subir ml_filters.json" en `/settings` para cargarlo desde el dashboard.
+- `src/lib/ml-scorer.ts`: `scoreSignal(features, weights)` con regresión logística (mismos coeficientes del notebook). Devuelve probabilidad 0-1.
+- En `evaluate-signals`, para cada señal generada:
+  1. Extraer features del candle actual (ATR%, cuerpo%, distancia a EMA200, régimen, hora).
+  2. Si hay scorer entrenado para el motor → calcular `p_win`. Si `p_win < 0.5` → señal descartada; si `0.5 ≤ p_win < 0.6` → downgrade a `medium`; `≥ 0.6` → sube a `high`.
+  3. Guardar `p_win` y `regime` en `signal_events.metadata`.
+- El "loop online" se ejecuta cuando el kill-switch registra un cierre: si la estrategia tiene ≥30 trades cerrados, encola una re-optimización (por ahora sólo emite alerta Telegram "toca re-entrenar en Kaggle"). El re-entrenamiento real sigue viviendo en el notebook — no reentrenamos en el edge worker.
 
-**FOMC/NFP**: hardcodear fechas conocidas 2024-2026 en `src/lib/economic-calendar.ts`, mostrar badge "⚠️ NFP hoy" en dashboard y en backtest marcar esos días en un color distinto en la gráfica por-día.
-
-## 3. Multi-estrategia
-
-### Tabla
+## Migraciones DB
 
 ```sql
-CREATE TABLE public.strategies (
+ALTER TABLE user_config
+  ADD COLUMN econ_filter_enabled boolean NOT NULL DEFAULT true,
+  ADD COLUMN econ_filter_window_min int NOT NULL DEFAULT 30;
+
+ALTER TABLE signal_events
+  ADD COLUMN metadata jsonb;
+
+CREATE TABLE public.ml_scorers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL,
-  name text NOT NULL,
-  description text,
-  engine_key text NOT NULL,  -- 'smc_london' | 'ny_continuation' | future...
-  params jsonb NOT NULL DEFAULT '{}',  -- minScore, excludeHours, etc.
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT now()
+  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  engine text NOT NULL,
+  weights jsonb NOT NULL,
+  features text[] NOT NULL,
+  auc numeric,
+  trained_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(user_id, engine)
 );
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.ml_scorers TO authenticated;
+GRANT ALL ON public.ml_scorers TO service_role;
+ALTER TABLE public.ml_scorers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "own scorers" ON public.ml_scorers FOR ALL
+  USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 ```
 
-+ GRANT + RLS por `user_id`. Seed automático al primer login con E1 y E2.
+## Archivos a tocar
 
-### Engine refactor
+- `supabase migration` (bloque SQL arriba)
+- `src/lib/economic-calendar.ts` (+fetch remoto)
+- `src/routes/api/public/econ-calendar.ts` (nuevo)
+- `src/lib/market-regime.ts` (nuevo)
+- `src/lib/ml-scorer.ts` (nuevo)
+- `src/lib/ml-scorers.functions.ts` (upload/list scorers desde UI)
+- `src/routes/api/public/hooks/evaluate-signals.ts` (integrar los 3 filtros)
+- `src/lib/config.functions.ts` (nuevos campos)
+- `src/routes/_authenticated/settings.tsx` (UI: econ toggle + upload scorer + tabla eventos)
+- Sin cambios en el EA (todo pasa antes de crear el `mt5_signals`)
 
-- `src/lib/strategies/index.ts` con registro `{ smc_london: smcLondonEngine, ny_continuation: nyContinuationEngine }`.
-- Cada engine implementa `evaluateBar(bars, params) → Setup | null`.
-- `backtest.ts` recibe `engineKey + params` en vez de tener la lógica hardcodeada.
+## Fuera de alcance ahora
+- Re-entrenamiento automático en producción (queda en Kaggle).
+- Kelly / position sizing adaptativo (#5) — más adelante.
+- Walk-forward automático (#7) — más adelante.
 
-### UI
-
-- Nueva ruta `/strategies` para CRUD de estrategias (lista, editar nombre/descripción/params, duplicar).
-- En `/backtest`: selector "¿Qué estrategia probar?" con multiselect para comparar 2-3 estrategias lado a lado.
-- En `/dashboard`: badge en cada setup mostrando qué estrategia lo generó.
-
-## 4. Estrategia 2: Continuación NY
-
-`src/lib/strategies/ny-continuation.ts`:
-
-- **Contexto H4**: tendencia clara (EMA20 vs EMA50, pendiente positiva/negativa).
-- **Setup H1**: precio hace pullback a EMA50 ± 0.5 ATR sin romper estructura.
-- **Entrada M15**: BOS a favor de la tendencia + FVG en zona de pullback.
-- **Killzone**: solo UTC 13-16 (solape Londres-NY + apertura NY pura).
-- **SL**: bajo último swing M15 + buffer ATR.
-- **TPs**: 1R / 2R / 3R (más conservador que E1 por ser continuación).
-
-## Sección técnica
-
-### Archivos nuevos
-- `public/mt5/XAUUSD_History_Export.mq5`
-- `src/lib/economic-calendar.ts`
-- `src/lib/strategies/index.ts`
-- `src/lib/strategies/smc-london.ts` (extraer de signal-engine actual)
-- `src/lib/strategies/ny-continuation.ts`
-- `src/lib/strategies.functions.ts` (CRUD)
-- `src/routes/_authenticated/strategies.tsx`
-- Migración Supabase para tabla `strategies` + seed
-
-### Archivos modificados
-- `src/lib/csv-parser.ts` — formato MT5 + clasificación TF
-- `src/lib/backtest.ts` y `.functions.ts` — recibir `engineKey`, filtros automáticos
-- `src/routes/_authenticated/backtest.tsx` — multi-CSV, selector estrategia, comparador
-- `src/lib/signal-engine.ts` — delegar al registro de strategies
-- `src/routes/_authenticated/dashboard.tsx` — mostrar estrategia origen + badge FOMC/NFP
-
-### Riesgos
-- El refactor de signal-engine puede romper alertas Telegram → mantener back-compat con engine_key default `smc_london`.
-- CSV grandes (M1 con 10 años ≈ 3M velas) pueden tumbar el navegador → procesar en chunks y avisar si excede 500k filas.
-
-## Lo que NO incluye este plan
-- Bots MQL5 ejecutables (esa fase viene después).
-- Backtest con datos tick-by-tick (solo OHLC por vela).
-- Walk-forward optimization cruzado entre estrategias.
+¿Le doy?
