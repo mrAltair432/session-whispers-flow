@@ -162,13 +162,11 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
         const regimeInfo = bars.H1 && bars.H1.length >= 60 ? detectRegime(bars.H1) : null;
 
         // Features base para el ML re-scoring (ampliables por estrategia)
-        function buildFeatures(sig: Signal & object): Record<string, number> {
+        function buildFeatures(sig: NonNullable<Signal>): Record<string, number> {
           const feats: Record<string, number> = {};
-          if (sig && typeof sig === "object") {
-            feats.score = sig.score;
-            feats.confidence_high = sig.confidence === "high" ? 1 : 0;
-            feats.bias_long = sig.bias === "long" ? 1 : 0;
-          }
+          feats.score = sig.score;
+          feats.confidence_high = sig.confidence === "high" ? 1 : 0;
+          feats.bias_long = sig.bias === "long" ? 1 : 0;
           if (regimeInfo) {
             feats.adx = regimeInfo.adx;
             feats.atr_pct = regimeInfo.atrPct;
