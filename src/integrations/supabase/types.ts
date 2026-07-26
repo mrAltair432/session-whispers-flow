@@ -41,6 +41,42 @@ export type Database = {
         }
         Relationships: []
       }
+      engine_health: {
+        Row: {
+          consecutive_losses: number
+          disabled_at: string | null
+          disabled_reason: string | null
+          engine: string
+          id: string
+          total_closed: number
+          total_r: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          consecutive_losses?: number
+          disabled_at?: string | null
+          disabled_reason?: string | null
+          engine: string
+          id?: string
+          total_closed?: number
+          total_r?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          consecutive_losses?: number
+          disabled_at?: string | null
+          disabled_reason?: string | null
+          engine?: string
+          id?: string
+          total_closed?: number
+          total_r?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       journal_trades: {
         Row: {
           bias: string
@@ -136,6 +172,7 @@ export type Database = {
           bias: string
           break_even_at_r: number | null
           closed_at: string | null
+          closed_reason: string | null
           confidence: string | null
           created_at: string
           engine: string
@@ -169,6 +206,7 @@ export type Database = {
           bias: string
           break_even_at_r?: number | null
           closed_at?: string | null
+          closed_reason?: string | null
           confidence?: string | null
           created_at?: string
           engine: string
@@ -202,6 +240,7 @@ export type Database = {
           bias?: string
           break_even_at_r?: number | null
           closed_at?: string | null
+          closed_reason?: string | null
           confidence?: string | null
           created_at?: string
           engine?: string
