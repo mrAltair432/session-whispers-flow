@@ -175,3 +175,15 @@ export function getNextEvent(events: EconEvent[], from: Date = new Date()): Econ
   }
   return null;
 }
+
+// ---- Compat helpers (browser-friendly, sólo fallback) ----
+// Firmas antiguas que el dashboard sigue usando; no dependen del feed remoto.
+
+export function getTodayEvents(): EconEvent[] {
+  const today = new Date().toISOString().slice(0, 10);
+  return getFallbackEvents().filter((e) => e.date === today);
+}
+
+export function getNextFallbackEvent(from: Date = new Date()): EconEvent | null {
+  return getNextEvent(getFallbackEvents(), from);
+}
