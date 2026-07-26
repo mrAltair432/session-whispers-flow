@@ -193,8 +193,6 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
         // --- F. Kill-switch automático: si el cierre es una pérdida,
         // evaluamos salud de la estrategia y la desactivamos si es necesario.
         if (parsed.data.action === "closed" && sig.engine) {
-          let r = effectiveR;
-
           // Recompute health from last 20 closed real trades for this engine
           const { data: recentClosed } = await supabaseAdmin
             .from("mt5_signals")
