@@ -1,6 +1,37 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
+export type EngineHealthRow = {
+  engine: string;
+  consecutive_losses: number;
+  total_closed: number;
+  total_r: number;
+  disabled_at: string | null;
+  disabled_reason: string | null;
+  updated_at: string;
+};
+
+export type RealTradeRow = {
+  id: string;
+  engine: string;
+  bias: string;
+  score: number;
+  confidence: string;
+  entry: number;
+  stop_loss: number;
+  tp1: number;
+  status: string;
+  mt5_ticket: number | null;
+  fill_price: number | null;
+  filled_at: string | null;
+  exit_price: number | null;
+  pnl_usd: number | null;
+  r_multiple: number | null;
+  closed_reason: string | null;
+  closed_at: string | null;
+  created_at: string;
+};
+
 // Devuelve el estado del token EA del usuario. No expone el token en el listado
 // — sólo indica si existe y cuándo fue usado por última vez.
 export const getMyEaToken = createServerFn({ method: "GET" })
