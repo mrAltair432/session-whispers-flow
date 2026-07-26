@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { getMyConfig, updateMyConfig } from "@/lib/config.functions";
 import { sendTelegramTest } from "@/lib/setups.functions";
 import { getMyEaToken, rotateMyEaToken, deleteMyEaToken, getMyMt5Diagnostics } from "@/lib/mt5.functions";
+import { listStrategies } from "@/lib/strategies";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +34,7 @@ function SettingsPage() {
     auto_alert_high_confidence: true,
     mt5_auto_route_enabled: false,
     mt5_min_confidence: "high" as "high" | "medium",
+    mt5_enabled_engines: null as string[] | null,
   });
 
   useEffect(() => {
@@ -46,6 +48,7 @@ function SettingsPage() {
       auto_alert_high_confidence: data.auto_alert_high_confidence,
       mt5_auto_route_enabled: (data as { mt5_auto_route_enabled?: boolean }).mt5_auto_route_enabled ?? false,
       mt5_min_confidence: ((data as { mt5_min_confidence?: string }).mt5_min_confidence as "high" | "medium") ?? "high",
+      mt5_enabled_engines: (data as { mt5_enabled_engines?: string[] | null }).mt5_enabled_engines ?? null,
     });
   }, [data]);
 
@@ -183,6 +186,51 @@ function SettingsPage() {
                 <option value="medium">Media o Alta</option>
               </select>
             </Field>
+
+            <div className="border-t border-border pt-4 space-y-2">
+              <div>
+                <Label className="text-sm">Estrategias conectadas al EA</Label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Sólo las estrategias activadas aquí encolarán operaciones en MT5. Las apagadas siguen generando señales y avisos en Telegram, pero no se envían al EA.
+                </p>
+              </div>
+              <div className="space-y-2">
+                {listStrategies().map((s) => {
+                  const enabled = form.mt5_enabled_engines === null
+                    ? true
+                    : form.mt5_enabled_engines.includes(s.key);
+                  return (
+                    <div key={s.key} className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{s.shortName}</p>
+                        <p className="text-xs text-muted-foreground truncate">{s.name}</p>
+                      </div>
+                      <Switch
+                        checked={enabled}
+                        onCheckedChange={(v) => {
+                          const all = listStrategies().map((x) => x.key);
+                          const current = form.mt5_enabled_engines === null ? [...all] : [...form.mt5_enabled_engines];
+                          const next = v
+                            ? Array.from(new Set([...current, s.key]))
+                            : current.filter((k) => k !== s.key);
+                          setForm({ ...form, mt5_enabled_engines: next });
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button type="button" variant="outline" size="sm"
+                  onClick={() => setForm({ ...form, mt5_enabled_engines: null })}>
+                  Activar todas
+                </Button>
+                <Button type="button" variant="ghost" size="sm"
+                  onClick={() => setForm({ ...form, mt5_enabled_engines: [] })}>
+                  Desactivar todas
+                </Button>
+              </div>
+            </div>
 
             <div className="border-t border-border pt-4 space-y-3">
               <div className="flex items-center justify-between">
