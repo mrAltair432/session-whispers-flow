@@ -24,6 +24,7 @@ const updateSchema = z.object({
   auto_alert_high_confidence: z.boolean(),
   mt5_auto_route_enabled: z.boolean().optional(),
   mt5_min_confidence: z.enum(["high", "medium"]).optional(),
+  mt5_enabled_engines: z.array(z.string()).nullable().optional(),
 });
 
 export const updateMyConfig = createServerFn({ method: "POST" })
