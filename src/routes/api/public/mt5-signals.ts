@@ -173,15 +173,7 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
 
         await supabaseAdmin.from("mt5_signals").update(patch).eq("id", sig.id);
 
-        // --- D. R efectivo del cierre (usado en signal_events y en kill-switch).
-        let effectiveR = parsed.data.r_multiple ?? 0;
-        if (effectiveR === 0 && typeof parsed.data.pnl_usd === "number" && sig.risk_usd && Number(sig.risk_usd) > 0) {
-          effectiveR = parsed.data.pnl_usd / Number(sig.risk_usd);
-        }
-        const isLoss = (typeof parsed.data.r_multiple === "number" && parsed.data.r_multiple < -0.05)
-          || (typeof parsed.data.pnl_usd === "number" && parsed.data.pnl_usd < 0);
-
-        // --- E. Reflejar el cierre nativo del EA en signal_events para que
+        // --- D. Reflejar el cierre nativo del EA en signal_events para que
         // el historial / winrate del dashboard se actualice sin intervención.
         if (parsed.data.action === "closed" && sig.signal_event_id) {
           let outcome: "win" | "loss" | "breakeven" = "breakeven";
