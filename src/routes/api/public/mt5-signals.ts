@@ -163,38 +163,35 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
 
         await supabaseAdmin.from("mt5_signals").update(patch).eq("id", sig.id);
 
-        // --- D. Reflejar el cierre nativo del EA en signal_events para que
+        // --- D. R efectivo del cierre (usado en signal_events y en kill-switch).
+        let effectiveR = parsed.data.r_multiple ?? 0;
+        if (effectiveR === 0 && typeof parsed.data.pnl_usd === "number" && sig.risk_usd && Number(sig.risk_usd) > 0) {
+          effectiveR = parsed.data.pnl_usd / Number(sig.risk_usd);
+        }
+        const isLoss = (typeof parsed.data.r_multiple === "number" && parsed.data.r_multiple < -0.05)
+          || (typeof parsed.data.pnl_usd === "number" && parsed.data.pnl_usd < 0);
+
+        // --- E. Reflejar el cierre nativo del EA en signal_events para que
         // el historial / winrate del dashboard se actualice sin intervención.
         if (parsed.data.action === "closed" && sig.signal_event_id) {
-          const rMul = parsed.data.r_multiple;
           let outcome: "win" | "loss" | "breakeven" = "breakeven";
-          if (typeof rMul === "number") {
-            if (rMul > 0.05) outcome = "win";
-            else if (rMul < -0.05) outcome = "loss";
-          } else if (typeof parsed.data.pnl_usd === "number") {
-            outcome = parsed.data.pnl_usd > 0 ? "win" : parsed.data.pnl_usd < 0 ? "loss" : "breakeven";
-          }
+          if (effectiveR > 0.05) outcome = "win";
+          else if (effectiveR < -0.05) outcome = "loss";
           await supabaseAdmin
             .from("signal_events")
             .update({
               outcome,
-              r_multiple: rMul ?? null,
+              r_multiple: effectiveR,
               exit_price: parsed.data.exit_price ?? null,
               closed_at: nowIso,
             })
             .eq("id", sig.signal_event_id);
         }
 
-        // --- E. Kill-switch automático: si el cierre es una pérdida,
+        // --- F. Kill-switch automático: si el cierre es una pérdida,
         // evaluamos salud de la estrategia y la desactivamos si es necesario.
         if (parsed.data.action === "closed" && sig.engine) {
-          let r = parsed.data.r_multiple ?? 0;
-          // Fallback: si el EA no envió R, calcularlo desde P&L / riesgo original.
-          if (r === 0 && typeof parsed.data.pnl_usd === "number" && sig.risk_usd && Number(sig.risk_usd) > 0) {
-            r = parsed.data.pnl_usd / Number(sig.risk_usd);
-          }
-          const isLoss = (typeof parsed.data.r_multiple === "number" && parsed.data.r_multiple < -0.05)
-            || (typeof parsed.data.pnl_usd === "number" && parsed.data.pnl_usd < 0);
+          let r = effectiveR;
 
           // Recompute health from last 20 closed real trades for this engine
           const { data: recentClosed } = await supabaseAdmin
