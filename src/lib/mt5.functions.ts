@@ -123,3 +123,31 @@ export const getMyMt5Diagnostics = createServerFn({ method: "GET" })
       checked_at: nowIso,
     };
   });
+
+export const getMyEngineHealth = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<EngineHealthRow[]> => {
+    const { data, error } = await context.supabase
+      .from("engine_health")
+      .select("engine, consecutive_losses, total_closed, total_r, disabled_at, disabled_reason, updated_at")
+      .eq("user_id", context.userId)
+      .order("updated_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data ?? []) as EngineHealthRow[];
+  });
+
+export const getMyRealTrades = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }): Promise<RealTradeRow[]> => {
+    const { data, error } = await context.supabase
+      .from("mt5_signals")
+      .select(
+        "id, engine, bias, score, confidence, entry, stop_loss, tp1, status, mt5_ticket, fill_price, filled_at, exit_price, pnl_usd, r_multiple, closed_reason, closed_at, created_at",
+      )
+      .eq("user_id", context.userId)
+      .in("status", ["filled", "closed", "error"])
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw new Error(error.message);
+    return (data ?? []) as RealTradeRow[];
+  });
