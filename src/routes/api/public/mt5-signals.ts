@@ -188,7 +188,11 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
         // --- E. Kill-switch automático: si el cierre es una pérdida,
         // evaluamos salud de la estrategia y la desactivamos si es necesario.
         if (parsed.data.action === "closed" && sig.engine) {
-          const r = parsed.data.r_multiple ?? (typeof parsed.data.pnl_usd === "number" ? 0 : 0);
+          let r = parsed.data.r_multiple ?? 0;
+          // Fallback: si el EA no envió R, calcularlo desde P&L / riesgo original.
+          if (r === 0 && typeof parsed.data.pnl_usd === "number" && sig.risk_usd && Number(sig.risk_usd) > 0) {
+            r = parsed.data.pnl_usd / Number(sig.risk_usd);
+          }
           const isLoss = (typeof parsed.data.r_multiple === "number" && parsed.data.r_multiple < -0.05)
             || (typeof parsed.data.pnl_usd === "number" && parsed.data.pnl_usd < 0);
 
