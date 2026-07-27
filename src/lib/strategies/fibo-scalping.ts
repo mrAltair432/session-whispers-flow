@@ -17,7 +17,7 @@ export function evaluateFiboScalping(
   h1: Candle[],
   m15: Candle[],
   m5: Candle[],
-  minScore = 65,
+  minScore = 72,
 ): Signal {
   if (h4.length < 50 || h1.length < 40 || m15.length < 25 || m5.length < 60) return null;
 
@@ -26,7 +26,9 @@ export function evaluateFiboScalping(
   const h4Ema20 = ema(h4Closes, 20);
   const h4Ema50 = ema(h4Closes, 50);
   const diffH4 = (h4Ema20[h4Ema20.length - 1] - h4Ema50[h4Ema50.length - 1]) / h4Ema50[h4Ema50.length - 1];
-  if (Math.abs(diffH4) < 0.0005) return null;
+  // Umbral de tendencia H4 más estricto (0.08 %): evita entrar en H4 planos
+  // donde el retroceso Fibo se queda oscilando en la zona.
+  if (Math.abs(diffH4) < 0.0008) return null;
   const bias: "long" | "short" = diffH4 > 0 ? "long" : "short";
 
   // ---- H1 swing (últimas ~40 velas) ----
@@ -53,8 +55,9 @@ export function evaluateFiboScalping(
   const zoneTop = bias === "long" ? lvl500 : lvl786;
   const zoneBot = bias === "long" ? lvl786 : lvl500;
 
-  // ---- M15: precio debe haber tocado la zona en las últimas 6 velas ----
-  const recent = m15.slice(-6);
+  // ---- M15: precio debe haber tocado la zona en las últimas 4 velas ----
+  // Ventana más corta → toque "fresco" y evita reentrar en zonas ya sobre-explotadas.
+  const recent = m15.slice(-4);
   const touched = recent.some((c) => c.low <= zoneTop && c.high >= zoneBot);
   if (!touched) return null;
 
@@ -95,6 +98,10 @@ export function evaluateFiboScalping(
     bias === "long"
       ? h1Ema20[h1Ema20.length - 1] > h1Ema50[h1Ema50.length - 1]
       : h1Ema20[h1Ema20.length - 1] < h1Ema50[h1Ema50.length - 1];
+  // Alineación H1 ahora es obligatoria (viene del EA Fibonacci 61.8, que exige
+  // confluencia multi-TF antes de disparar el grid). Sin martingala, esta
+  // confluencia es lo que sostiene el winrate.
+  if (!h1Aligned) return null;
 
   // ---- Confluencia Fibo H4 (idea del Fibonacci 61.8 EA, sin martingala) ----
   // Detectamos el último swing H4 (últimas ~40 velas) y comprobamos si el
@@ -122,7 +129,8 @@ export function evaluateFiboScalping(
     m15Bos: bosOk ? 15 : 5,
     killzone: inKz ? 12 : 0,
     atr: atrRatio >= 1 ? 10 : atrRatio >= 0.85 ? 7 : 4,
-    h1Alignment: (h1Aligned ? 3 : 0) + (h4Confluence ? 2 : 0),
+    // H1 ya es obligatoria (3) + bonus fuerte por confluencia Fibo H4 (4).
+    h1Alignment: 3 + (h4Confluence ? 4 : 0),
     total: 0,
   };
   breakdown.total =
@@ -180,11 +188,14 @@ export function evaluateFiboScalping(
     // BE temprano en 0.8R, cierre por tiempo si no llega a TP1 en 24 M5 (~2h)
     // y trailing escalonado tras 1R en pasos de 0.5·ATR(M5). El daily target
     // se configura al invocar el backtest / EA (2.0R / -2.0R por defecto).
+    // Gestión optimizada: BE más temprano protege el capital antes de la
+    // reversión típica de scalping M5, time-stop más corto libera el runner
+    // y el trailing arranca antes con pasos más finos.
     management: {
-      breakEvenAtR: 0.8,
-      timeStopBars: 24,
-      trailAfterR: 1.0,
-      trailStepAtrMult: 0.5,
+      breakEvenAtR: 0.6,
+      timeStopBars: 20,
+      trailAfterR: 0.8,
+      trailStepAtrMult: 0.4,
     },
   };
 }
