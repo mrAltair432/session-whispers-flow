@@ -1,4 +1,5 @@
 import type { Candle } from "./analysis";
+import { atr as atrSeries } from "./analysis";
 import { getStrategy, type Bars, type EngineKey, type StrategyParams } from "./strategies";
 import type { TfKey } from "./csv-parser";
 
@@ -23,6 +24,12 @@ export type BacktestOptions = {
   excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
   autoTimeFilters?: boolean; // default true: aplica filtros de horario peligroso del oro
   costs?: BacktestCosts;
+  // Daily equity guardrails (idea portada del Fibonacci 61.8 EA, en R):
+  // una vez que el PnL del día UTC alcanza `dailyTargetR` o cae por debajo
+  // de `-dailyLossLimitR`, no se abren nuevas operaciones hasta el siguiente
+  // día UTC. No cierra posiciones ya abiertas.
+  dailyTargetR?: number;
+  dailyLossLimitR?: number;
   // Reporte de progreso desde el bucle de simulación. El worker lo usa para
   // enviar % + trades acumulados a la UI cada ~5000 barras evaluadas.
   onProgress?: (p: { phase: "simulate"; percent: number; trades: number; bar: number; totalBars: number }) => void;
