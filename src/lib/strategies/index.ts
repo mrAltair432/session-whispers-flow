@@ -73,13 +73,13 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     name: "Fibo Scalping M5 Oro (Londres)",
     shortName: "E3 · Fibo Scalping M5",
     description:
-      "Sesgo H4 + swing H1 + retroceso 0.5-0.786 tocado en M15, con trigger de entrada en M5 (BOS20). Solo Londres UTC 07-11, sin domingos, viernes hasta mediodía. Base directa para bot MT5.",
-    defaultParams: { minScore: 65 },
+      "v2 (post-Fibonacci 61.8 EA sin martingala): sesgo H4 (>0.08%), swing H1 con EMA20/50 alineada obligatoria, retroceso 0.5-0.786 tocado en las últimas 4 M15, trigger M5 con BOS20 y bonus por confluencia Fibo H4. Killzone Londres 07-11, sin domingos, viernes hasta 12 UTC. Gestión: BE@0.6R, time-stop 20 M5, trailing escalonado desde 0.8R (paso 0.4·ATR), daily target/loss ±2R.",
+    defaultParams: { minScore: 72 },
     killzoneHoursUTC: [7, 8, 9, 10],
     triggerTf: "M5",
     requiredTfs: ["H4", "H1", "M15", "M5"],
     evaluate: (bars, params) =>
-      evaluateFiboScalping(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 65),
+      evaluateFiboScalping(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 72),
   },
   gold_scalping: {
     key: "gold_scalping",
