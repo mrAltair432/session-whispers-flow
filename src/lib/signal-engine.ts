@@ -42,6 +42,12 @@ export type Signal = {
   management?: {
     breakEvenAtR?: number;   // mueve SL a entry cuando r no realizado >= N*R
     timeStopBars?: number;   // cierra a mercado tras N barras del trigger TF sin TP1
+    // Trailing escalonado (idea portada del Fibonacci 61.8 EA, sin grid):
+    // una vez que el MFE alcanza `trailAfterR` * R, el SL se arrastra por
+    // pasos discretos de `trailStepAtrMult` * ATR(triggerTF, 14). Solo el
+    // simulador y el EA MT5 lo usan; el engine solo declara la intención.
+    trailAfterR?: number;
+    trailStepAtrMult?: number;
   };
 } | null;
 

@@ -1,4 +1,5 @@
 import type { Candle } from "./analysis";
+import { atr as atrSeries } from "./analysis";
 import { getStrategy, type Bars, type EngineKey, type StrategyParams } from "./strategies";
 import type { TfKey } from "./csv-parser";
 
@@ -23,6 +24,12 @@ export type BacktestOptions = {
   excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
   autoTimeFilters?: boolean; // default true: aplica filtros de horario peligroso del oro
   costs?: BacktestCosts;
+  // Daily equity guardrails (idea portada del Fibonacci 61.8 EA, en R):
+  // una vez que el PnL del día UTC alcanza `dailyTargetR` o cae por debajo
+  // de `-dailyLossLimitR`, no se abren nuevas operaciones hasta el siguiente
+  // día UTC. No cierra posiciones ya abiertas.
+  dailyTargetR?: number;
+  dailyLossLimitR?: number;
   // Reporte de progreso desde el bucle de simulación. El worker lo usa para
   // enviar % + trades acumulados a la UI cada ~5000 barras evaluadas.
   onProgress?: (p: { phase: "simulate"; percent: number; trades: number; bar: number; totalBars: number }) => void;
@@ -161,7 +168,8 @@ function simulateTrade(
   tp3: number,
   maxHoldBars: number,
   costPerSideUsd: number,
-  management?: { breakEvenAtR?: number; timeStopBars?: number },
+  management?: { breakEvenAtR?: number; timeStopBars?: number; trailAfterR?: number; trailStepAtrMult?: number },
+  atrArr?: number[],
 ): { exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number } {
   const initRisk = Math.abs(entry - initialSL);
   let sl = initialSL;
@@ -175,7 +183,11 @@ function simulateTrade(
   realizedR -= costR;
   const beAtR = management?.breakEvenAtR;
   const timeStopBars = management?.timeStopBars;
+  const trailAfterR = management?.trailAfterR;
+  const trailStepMult = management?.trailStepAtrMult;
+  const trailingOn = !!(trailAfterR && trailStepMult && atrArr && atrArr.length);
   let beMoved = false;
+  let bestPrice = entry; // MFE para trailing escalonado
 
   const closeRemaining = (price: number, time: number, outcome: BacktestTrade["outcome"]) => {
     const moveR = bias === "long" ? (price - entry) / initRisk : (entry - price) / initRisk;
@@ -203,6 +215,21 @@ function simulateTrade(
       }
     }
     if (bias === "long") {
+      // Trailing escalonado (post-Fibonacci EA idea): tras alcanzar
+      // trailAfterR·R, arrastramos SL en pasos discretos de step·ATR bajo
+      // el MFE. Nunca movemos SL en contra.
+      if (trailingOn) {
+        bestPrice = Math.max(bestPrice, c.high);
+        const mfeR = (bestPrice - entry) / initRisk;
+        if (mfeR >= (trailAfterR as number)) {
+          const step = (atrArr as number[])[i] * (trailStepMult as number);
+          if (step > 0) {
+            const trail = Math.floor((bestPrice - entry) / step) * step;
+            const candidate = entry + trail - step;
+            if (candidate > sl) sl = candidate;
+          }
+        }
+      }
       // Check SL first (conservative)
       if (c.low <= sl) {
         if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
@@ -230,6 +257,18 @@ function simulateTrade(
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time };
       }
     } else {
+      if (trailingOn) {
+        bestPrice = Math.min(bestPrice, c.low);
+        const mfeR = (entry - bestPrice) / initRisk;
+        if (mfeR >= (trailAfterR as number)) {
+          const step = (atrArr as number[])[i] * (trailStepMult as number);
+          if (step > 0) {
+            const trail = Math.floor((entry - bestPrice) / step) * step;
+            const candidate = entry - trail + step;
+            if (candidate < sl) sl = candidate;
+          }
+        }
+      }
       if (c.high >= sl) {
         if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
@@ -349,6 +388,13 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
   const maxHold = opts.maxHoldBars ?? defaultMaxHold;
   const cooldown = opts.cooldownBars ?? defaultCooldown;
   const autoFilters = opts.autoTimeFilters ?? true;
+  const dailyTargetR = opts.dailyTargetR;
+  const dailyLossLimitR = opts.dailyLossLimitR;
+  const dailyPnl = new Map<string, number>();
+  const dayKey = (t: number) => {
+    const d = new Date(t * 1000);
+    return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+  };
   // Defaults de costos por TF trigger. Oro retail M1: spread ~0.20 USD,
   // slippage ~0.05 USD, latencia 1 barra (60s) señal→ejecución.
   const costDefaults: BacktestCosts = triggerTf === "M1"
@@ -370,6 +416,8 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
   const totalBars = triggerBars.length;
   const progressStep = Math.max(2000, Math.floor(totalBars / 40));
   let lastReport = warmup;
+  // ATR del trigger TF para trailing escalonado (una sola vez).
+  const triggerAtr = atrSeries(triggerBars, 14);
 
   for (let i = warmup; i < triggerBars.length - 2; i++) {
     if (opts.onProgress && i - lastReport >= progressStep) {
@@ -388,6 +436,13 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     if (autoFilters && isMarketClosedOrRisky(d0)) continue;
     if (opts.excludeHours?.includes(d0.getUTCHours())) continue;
     if (opts.excludeWeekdays?.includes(d0.getUTCDay())) continue;
+    // Daily equity gate: cierra el día si ya se alcanzó target/loss.
+    if (dailyTargetR != null || dailyLossLimitR != null) {
+      const dk = dayKey(barTime);
+      const dPnl = dailyPnl.get(dk) ?? 0;
+      if (dailyTargetR != null && dPnl >= dailyTargetR) continue;
+      if (dailyLossLimitR != null && dPnl <= -Math.abs(dailyLossLimitR)) continue;
+    }
 
     const slicedBars: Bars = {
       [triggerTf]: triggerBars.slice(0, i + 1),
@@ -414,10 +469,12 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const tp2 = signal.bias === "long" ? entry + dist * 2 : entry - dist * 2;
     const tp3 = signal.bias === "long" ? entry + dist * 3 : entry - dist * 3;
 
-    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd, signal.management);
+    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd, signal.management, triggerAtr);
     const de = new Date(entryBar.time * 1000);
     const hourUTC = de.getUTCHours();
     const weekday = de.getUTCDay();
+    const dk2 = dayKey(entryBar.time);
+    dailyPnl.set(dk2, (dailyPnl.get(dk2) ?? 0) + sim.rMultiple);
     trades.push({
       openTime: entryBar.time,
       closeTime: sim.closeTime,

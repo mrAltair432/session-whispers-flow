@@ -96,6 +96,24 @@ export function evaluateFiboScalping(
       ? h1Ema20[h1Ema20.length - 1] > h1Ema50[h1Ema50.length - 1]
       : h1Ema20[h1Ema20.length - 1] < h1Ema50[h1Ema50.length - 1];
 
+  // ---- Confluencia Fibo H4 (idea del Fibonacci 61.8 EA, sin martingala) ----
+  // Detectamos el último swing H4 (últimas ~40 velas) y comprobamos si el
+  // 0.618 H4 cae cerca del 0.5-0.786 H1 (misma dirección del bias). Cuando
+  // hay confluencia MTF la probabilidad histórica del rebote sube.
+  let h4Confluence = false;
+  const h4Window = h4.slice(-40);
+  const h4Swings = detectSwings(h4Window, 2);
+  const h4High = [...h4Swings].reverse().find((s) => s.type === "high");
+  const h4Low = [...h4Swings].reverse().find((s) => s.type === "low");
+  if (h4High && h4Low) {
+    const h4Range = h4High.price - h4Low.price;
+    if (h4Range > 0) {
+      const h4_618 = bias === "long" ? h4High.price - h4Range * 0.618 : h4Low.price + h4Range * 0.618;
+      // Confluencia si el 0.618 H4 está dentro de la zona Fibo H1.
+      h4Confluence = h4_618 >= Math.min(zoneBot, zoneTop) && h4_618 <= Math.max(zoneBot, zoneTop);
+    }
+  }
+
   // ---- Scoring (mismos slots que el motor SMC para reusar features IA) ----
   const breakdown = {
     h4Trend: 20,
@@ -104,7 +122,7 @@ export function evaluateFiboScalping(
     m15Bos: bosOk ? 15 : 5,
     killzone: inKz ? 12 : 0,
     atr: atrRatio >= 1 ? 10 : atrRatio >= 0.85 ? 7 : 4,
-    h1Alignment: h1Aligned ? 5 : 0,
+    h1Alignment: (h1Aligned ? 3 : 0) + (h4Confluence ? 2 : 0),
     total: 0,
   };
   breakdown.total =
@@ -154,8 +172,19 @@ export function evaluateFiboScalping(
         `Killzone Londres: ${inKz ? "sí" : "fuera (UTC " + hUTC + ")"}`,
         `ATR M5 vs mediana: ${(atrRatio * 100).toFixed(0)}%`,
         `H1 EMAs ${h1Aligned ? "alineadas" : "no alineadas"}`,
+        `Confluencia Fibo H4: ${h4Confluence ? "sí (0.618 H4 dentro de zona H1)" : "no"}`,
         `Score: ${breakdown.total}/100`,
       ],
+    },
+    // Gestión heredada del Fibonacci 61.8 EA, adaptada sin grid:
+    // BE temprano en 0.8R, cierre por tiempo si no llega a TP1 en 24 M5 (~2h)
+    // y trailing escalonado tras 1R en pasos de 0.5·ATR(M5). El daily target
+    // se configura al invocar el backtest / EA (2.0R / -2.0R por defecto).
+    management: {
+      breakEvenAtR: 0.8,
+      timeStopBars: 24,
+      trailAfterR: 1.0,
+      trailStepAtrMult: 0.5,
     },
   };
 }
