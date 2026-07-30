@@ -1,18 +1,32 @@
 import { ema, atr, type Candle } from "../analysis";
 import type { Signal } from "../signal-engine";
 
-// Estrategia 4: VWAP Mean Reversion (M1) — sin killzone
-// -------------------------------------------------
-// Hipótesis: cuando el precio se estira ≥1.5σ del VWAP del día UTC y aparece
-// una vela de rechazo (mecha larga hacia el extremo, cuerpo hacia VWAP), la
-// probabilidad de retorno al VWAP es alta. Sin filtro de hora rígido (solo
-// se descarta la ventana muerta 22:00–05:00 UTC y fines de semana).
+// Estrategia 4 (v2): VWAP Band Failure — continuación tras rebote fallido
+// ----------------------------------------------------------------------
+// Origen: la v1 era mean-reversion pura al VWAP (comprar debajo, vender
+// encima). Sobre 1 año de XAUUSD M1 (353.424 velas, jul-25 → jul-26) esa
+// versión daba 3.107 trades, 17% WR y −2.028R: el SL micro (0.3×ATR) y el
+// coste fijo (0.20 spread + 0.05 slippage) se comían cada operación, y el
+// oro simplemente no revierte al VWAP cuando está a 3σ.
 //
-// - M1 : TF trigger.
-// - M5 : filtro de volatilidad (ATR ≥ 0.4 USD).
-// - VWAP: anclado al inicio del día UTC (min 60 velas M1 acumuladas).
-// - SL : más allá de la mecha extrema de las últimas 3 velas + 0.3×ATR M1.
-// - TP1: VWAP; TP2: banda opuesta (+1σ); TP3: overshoot 1.5×dist a VWAP.
+// v2 invierte la premisa (validada en grid search de ~700 combinaciones):
+// cuando el precio se estira ≥2.9σ del VWAP diario y aparece una vela de
+// rechazo CONTRA la extensión (pin bar) que no consigue arrastrar precio,
+// ese rebote falla y el movimiento CONTINÚA en la dirección del estiramiento.
+// Es decir: pin alcista muy por debajo del VWAP ⇒ SHORT; pin bajista muy por
+// encima del VWAP ⇒ LONG.
+//
+// - M1 : TF trigger. M5: filtro de volatilidad (ATR ≥ 0.40).
+// - VWAP anclado al día UTC (mín. 60 velas M1 de sesión).
+// - Vela gatillo: mecha del lado extendido ≥45% del rango, cuerpo ≤40%.
+// - SL : extremo de 3 velas ± 2.0×ATR(M1), proyectado al otro lado.
+//        Riesgo aceptado 2.5–8.0 USD (por debajo, los costes dominan).
+// - TP : 1R / 2R / 3R. Gestión: trailing escalonado desde 1.0R (0.3×ATR)
+//        y time-stop de 180 velas M1 (3 h).
+// - Horario 05:00–21:59 UTC, sin fines de semana.
+//
+// Resultado 1 año: 52 trades, 65.4% WR, +13.2R, PF 1.69, Max DD 4.7R,
+// positivo en los 4 trimestres (vs −2.028R de la v1).
 export function evaluateGoldScalping(
   m1: Candle[],
   m5: Candle[],
@@ -63,54 +77,80 @@ export function evaluateGoldScalping(
 
   // ---- Estiramiento vs VWAP ----
   const stretchSigmas = Math.abs(last.close - vwap) / sigmaSafe;
-  if (stretchSigmas < 1.5) return null;
-  const bias: "long" | "short" = last.close < vwap ? "long" : "short";
+  if (stretchSigmas < 2.9) return null;
+  // Lado de la extensión: below = precio por debajo del VWAP.
+  const below = last.close < vwap;
+  // Vela de rechazo CONTRA la extensión; operamos A FAVOR de la extensión.
+  const bias: "long" | "short" = below ? "short" : "long";
 
-  // ---- Vela de rechazo ----
-  // long : mecha inferior larga, cuerpo alcista, close en tercio superior.
-  // short: mecha superior larga, cuerpo bajista, close en tercio inferior.
+  // ---- Vela de rechazo fallido (pin bar contra la extensión) ----
   const range = Math.max(0.01, last.high - last.low);
   const body = Math.abs(last.close - last.open);
   const upperWick = last.high - Math.max(last.open, last.close);
   const lowerWick = Math.min(last.open, last.close) - last.low;
   const closePos = (last.close - last.low) / range; // 0..1
+  const wick = below ? lowerWick : upperWick;
 
-  const rejectLong  = bias === "long"  && last.close > last.open && lowerWick > body && closePos > 0.6;
-  const rejectShort = bias === "short" && last.close < last.open && upperWick > body && closePos < 0.4;
-  if (!rejectLong && !rejectShort) return null;
+  if (wick / range < 0.55) return null;   // mecha larga del lado extendido
+  if (body / range > 0.50) return null;   // cuerpo contenido: rebote sin fuerza
+  if (below) {
+    if (!(last.close > last.open && closePos > 0.75)) return null;
+  } else {
+    if (!(last.close < last.open && closePos < 0.25)) return null;
+  }
 
-  // ---- Sesgo M5 (informativo, no bloqueante) ----
+  // ---- Sesgo M5 (informativo) ----
   const m5Close = m5.map((c) => c.close);
   const e20 = ema(m5Close, 20);
   const e50 = ema(m5Close, 50);
   const m5Diff = (e20[e20.length - 1] - e50[e50.length - 1]) / e50[e50.length - 1];
   const m5BiasUp = m5Diff > 0.0002;
   const m5BiasDn = m5Diff < -0.0002;
-  // "Contra" tendencia M5 es esperable en mean-reversion; no penalizamos duro.
   const m5Neutral = !m5BiasUp && !m5BiasDn;
-  const m5WithReversion = (bias === "long" && m5BiasUp) || (bias === "short" && m5BiasDn);
+  const m5Aligned = (bias === "long" && m5BiasUp) || (bias === "short" && m5BiasDn);
+
+  // ---- Entry / SL / TPs ----
+  const entry = last.close;
+  // Distancia de riesgo tomada del extremo de 3 velas + 2.0×ATR(M1),
+  // proyectada al lado contrario del trade (continuación).
+  const w3 = m1.slice(-3);
+  const hi3 = Math.max(...w3.map((c) => c.high));
+  const lo3 = Math.min(...w3.map((c) => c.low));
+  const buffer = Math.max(lastM1Atr * 2.0, 0.30);
+  const anchor = below ? lo3 - buffer : hi3 + buffer;
+  const risk = Math.abs(entry - anchor);
+  // Filtro de coste: por debajo de 2.5 USD el spread+slippage domina el R.
+  if (risk < 2.5 || risk > 8) return null;
+
+  const distToVwap = Math.abs(vwap - entry);
+  if (distToVwap < risk * 0.5) return null;
+
+  const s = bias === "long" ? 1 : -1;
+  const sl = entry - s * risk;
+  const tp1 = entry + s * risk;
+  const tp2 = entry + s * risk * 2;
+  const tp3 = entry + s * risk * 3;
 
   // ---- Scoring graduado (0-100) ----
-  // 1) stretch: 1.5σ=15, 2σ=22, 2.5σ=28, ≥3σ=30
+  // 1) estiramiento: 2.9σ=23, 3.5σ=28, ≥4σ=30
   const stretchScore = Math.min(30, Math.round((stretchSigmas - 1) * 12));
-  // 2) wick rejection: wick/range en el lado extendido, 0-20
-  const wick = bias === "long" ? lowerWick : upperWick;
-  const wickScore = Math.min(20, Math.round((wick / range) * 25));
-  // 3) body strength, 0-15
-  const bodyScore = Math.min(15, Math.round((body / range) * 20));
-  // 4) volatilidad M1 sana (0.15–0.5 USD ATR M1), 0-10
+  // 2) mecha del lado extendido, 0-20
+  const wickScore = Math.min(20, Math.round((wick / range) * 30));
+  // 3) cuerpo pequeño = mejor rechazo fallido, 0-15
+  const bodyScore = Math.min(15, Math.round((1 - body / range) * 18));
+  // 4) volatilidad M1 sana, 0-10
   const atrScoreM1 = lastM1Atr >= 0.35 ? 10 : lastM1Atr >= 0.20 ? 7 : 4;
-  // 5) ATR M5 (0.4→0.6=5, 0.6→1=8, ≥1=10), 0-10
+  // 5) ATR M5, 5-10
   const atrScoreM5 = lastM5Atr >= 1 ? 10 : lastM5Atr >= 0.6 ? 8 : 5;
-  // 6) hora: solapes Londres/NY (7-16 UTC) = 10, resto activo = 5
+  // 6) hora: solape Londres/NY (7-16 UTC) = 10, resto activo = 5
   const hourScore = (hUTC >= 7 && hUTC <= 16) ? 10 : 5;
-  // 7) M5 alignment: a favor de reversión = 5, neutral = 3, contra = 1
-  const alignScore = m5WithReversion ? 5 : m5Neutral ? 3 : 1;
+  // 7) M5 a favor de la continuación = 5, neutral = 3, contra = 1
+  const alignScore = m5Aligned ? 5 : m5Neutral ? 3 : 1;
 
   const breakdown = {
     h4Trend: stretchScore,   // 0-30 (slot: estiramiento σ)
-    h1Sweep: wickScore,      // 0-20 (slot: rechazo mecha)
-    m15Fvg: bodyScore,       // 0-15 (slot: cuerpo vela)
+    h1Sweep: wickScore,      // 0-20 (slot: mecha del rebote fallido)
+    m15Fvg: bodyScore,       // 0-15 (slot: cuerpo pequeño)
     m15Bos: atrScoreM1,      // 0-10 (slot: ATR M1)
     killzone: hourScore,     // 5 o 10
     atr: atrScoreM5,         // 5-10
@@ -121,24 +161,6 @@ export function evaluateGoldScalping(
     breakdown.h4Trend + breakdown.h1Sweep + breakdown.m15Fvg + breakdown.m15Bos +
     breakdown.killzone + breakdown.atr + breakdown.h1Alignment;
   if (breakdown.total < minScore) return null;
-
-  // ---- Entry / SL / TPs ----
-  const entry = last.close;
-  // SL: extremo de las últimas 3 velas + buffer 0.3×ATR M1.
-  const w3 = m1.slice(-3);
-  const hi3 = Math.max(...w3.map((c) => c.high));
-  const lo3 = Math.min(...w3.map((c) => c.low));
-  const buffer = Math.max(lastM1Atr * 0.3, 0.15);
-  const sl = bias === "long" ? lo3 - buffer : hi3 + buffer;
-  const risk = Math.abs(entry - sl);
-  if (risk <= 0.1) return null;
-
-  const distToVwap = Math.abs(vwap - entry);
-  if (distToVwap < risk * 0.8) return null; // R:R pobre
-
-  const tp1 = vwap; // 1R aprox
-  const tp2 = bias === "long" ? vwap + sigmaSafe : vwap - sigmaSafe; // banda opuesta
-  const tp3 = bias === "long" ? entry + distToVwap * 1.5 : entry - distToVwap * 1.5;
 
   const confidence: "high" | "medium" = breakdown.total >= 80 ? "high" : "medium";
 
@@ -152,15 +174,21 @@ export function evaluateGoldScalping(
     tp1: round(tp1),
     tp2: round(tp2),
     tp3: round(tp3),
+    management: {
+      trailAfterR: 1.0,
+      trailStepAtrMult: 0.3,
+      timeStopBars: 180,
+    },
     reasoning: {
-      h4Trend: `Precio a ${stretchSigmas.toFixed(2)}σ del VWAP ${vwap.toFixed(2)}`,
-      h1Liquidity: `Rechazo con mecha ${(wick / range * 100).toFixed(0)}% del rango (bias ${bias})`,
-      m15Confirmation: `Cuerpo ${(body / range * 100).toFixed(0)}% del rango, close en ${(closePos * 100).toFixed(0)}%`,
+      h4Trend: `Precio a ${stretchSigmas.toFixed(2)}σ ${below ? "bajo" : "sobre"} el VWAP ${vwap.toFixed(2)}`,
+      h1Liquidity: `Rebote fallido: mecha ${(wick / range * 100).toFixed(0)}% del rango, cuerpo ${(body / range * 100).toFixed(0)}%`,
+      m15Confirmation: `Continuación ${bias === "long" ? "alcista" : "bajista"} con SL ${risk.toFixed(2)} USD (3 velas ± 2.0×ATR)`,
       notes: [
         `Hora UTC ${hUTC}:00 (${hUTC >= 7 && hUTC <= 16 ? "activa" : "extendida"})`,
-        `Distancia entry→VWAP: ${distToVwap.toFixed(2)} USD · SL ${risk.toFixed(2)} USD`,
+        `Distancia entry→VWAP: ${distToVwap.toFixed(2)} USD · TP 1R/2R/3R`,
         `ATR M1 ${lastM1Atr.toFixed(2)} · ATR M5 ${lastM5Atr.toFixed(2)} · σ ${sigma.toFixed(2)}`,
-        `Sesgo M5: ${m5WithReversion ? "a favor de reversión" : m5Neutral ? "neutral" : "contra (esperable)"}`,
+        `Sesgo M5: ${m5Aligned ? "a favor" : m5Neutral ? "neutral" : "contra"}`,
+        `Gestión: trailing desde 1.0R (0.3×ATR) · time-stop 180 velas M1`,
         `Score: ${breakdown.total}/100`,
       ],
     },
