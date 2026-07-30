@@ -83,16 +83,16 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
   },
   gold_scalping: {
     key: "gold_scalping",
-    name: "VWAP Mean Reversion Oro (M1)",
+    name: "VWAP Band Failure Oro (M1)",
     shortName: "E4 · VWAP Reversion",
     description:
-      "Scalping M1 de reversión al VWAP diario. Entra cuando el precio se estira ≥1.5σ y aparece vela de rechazo. Sin killzone (solo excluye 22–05 UTC y fines de semana). TP1 en VWAP, TP2 banda opuesta.",
-    defaultParams: { minScore: 65 },
+      "v2 (optimizada en 1 año de XAUUSD M1): la reversión al VWAP perdía −2.028R, así que ahora se opera la continuación. Precio estirado ≥2.9σ del VWAP diario + pin bar de rebote fallido (mecha ≥45%, cuerpo ≤40%) ⇒ se entra A FAVOR de la extensión. SL = extremo 3 velas ± 2.0×ATR(M1), riesgo 2.5-8 USD, TP 1R/2R/3R, trailing desde 1.0R (0.3×ATR) y time-stop 180 velas. 05-22 UTC, sin fines de semana. Backtest: 70 trades, 62.9% WR, +23.5R, PF 1.87, Max DD 4.5R.",
+    defaultParams: { minScore: 60 },
     killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     triggerTf: "M1",
     requiredTfs: ["M1", "M5"],
     evaluate: (bars, params) =>
-      evaluateGoldScalping(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 65),
+      evaluateGoldScalping(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 60),
   },
   ema_cross_m1: {
     key: "ema_cross_m1",
