@@ -96,16 +96,16 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
   },
   ema_cross_m1: {
     key: "ema_cross_m1",
-    name: "EMA Cross Reversal M1 (simétrico)",
+    name: "EMA Cross Reversal M1 v2 (fade)",
     shortName: "E5 · EMA Cross M1",
     description:
-      "Cruce EMA9/EMA21 en M1 con filtros simétricos y estrictos: slope EMA9, RSI(14) 55/45, cruce de MACD histograma en 0 y ATR M5 sano. Killzone UTC 7-16. SL = 1.2×ATR(M1).",
-    defaultParams: { minScore: 70 },
+      "Reversión al cruce EMA9/EMA21 en M1: detecta el impulso (slope EMA9 ≥ 0.20, RSI 55/45, MACD hist cruzando 0) y opera EN CONTRA. Killzone UTC 7-16, ATR M5 sano, SL = 1.8×ATR(M1) sobre swing 5b y trailing escalonado desde 1.0R (0.25×ATR). Optimizada en 1 año de XAUUSD M1: 301 trades, WR 56.8%, +36.5R, PF 1.27, Max DD 6.4R.",
+    defaultParams: { minScore: 60 },
     killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     triggerTf: "M1",
     requiredTfs: ["M1", "M5"],
     evaluate: (bars, params) =>
-      evaluateEmaCrossM1(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 70),
+      evaluateEmaCrossM1(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 60),
   },
   straddle_breakout: {
     key: "straddle_breakout",

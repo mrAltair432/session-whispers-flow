@@ -157,7 +157,7 @@ function sliceUpTo(candles: Candle[], time: number): Candle[] {
   return candles.slice(0, res + 1);
 }
 
-function simulateTrade(
+export function simulateTrade(
   m15: Candle[],
   entryIdx: number,
   bias: "long" | "short",
