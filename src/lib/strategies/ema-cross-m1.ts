@@ -106,10 +106,13 @@ export function evaluateEmaCrossM1(
   const hi5 = Math.max(...w5.map((c) => c.high));
   const lo5 = Math.min(...w5.map((c) => c.low));
   const buffer = lastM1Atr * 1.8;
-  // El ancla estructural se toma del lado del impulso: si el cruce fue
-  // alcista vendemos y el SL va sobre el máximo reciente, y viceversa.
-  const sl = bias === "long" ? lo5 - buffer : hi5 + buffer;
-  const risk = Math.abs(entry - sl);
+  // La distancia de riesgo se mide contra el extremo del swing en la
+  // dirección del impulso (que es la zona que el precio acaba de recorrer)
+  // y se refleja al lado contrario, que es donde operamos.
+  const risk = impulse === "long"
+    ? entry - (lo5 - buffer)
+    : (hi5 + buffer) - entry;
+  const sl = bias === "long" ? entry - risk : entry + risk;
   if (risk <= 0.1) return null;
   const tp1 = bias === "long" ? entry + risk : entry - risk;
   const tp2 = bias === "long" ? entry + risk * 2 : entry - risk * 2;
