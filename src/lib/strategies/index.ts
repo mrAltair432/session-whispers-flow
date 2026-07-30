@@ -86,7 +86,7 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     name: "VWAP Band Failure Oro (M1)",
     shortName: "E4 · VWAP Reversion",
     description:
-      "v2 (optimizada en 1 año de XAUUSD M1): la reversión al VWAP perdía −2.028R, así que ahora se opera la continuación. Precio estirado ≥2.9σ del VWAP diario + pin bar de rebote fallido (mecha ≥45%, cuerpo ≤40%) ⇒ se entra A FAVOR de la extensión. SL = extremo 3 velas ± 2.0×ATR(M1), riesgo 2.5-8 USD, TP 1R/2R/3R, trailing desde 1.0R (0.3×ATR) y time-stop 180 velas. 05-22 UTC, sin fines de semana. Backtest: 70 trades, 62.9% WR, +23.5R, PF 1.87, Max DD 4.5R.",
+      "v2 (optimizada en 1 año de XAUUSD M1): la reversión al VWAP perdía −2.028R, así que ahora se opera la continuación. Precio estirado ≥2.9σ del VWAP diario + pin bar de rebote fallido (mecha ≥55%, cuerpo ≤50%) ⇒ se entra A FAVOR de la extensión. SL = extremo 3 velas ± 2.0×ATR(M1), riesgo 2.5-8 USD, TP 1R/2R/3R, trailing desde 1.0R (0.3×ATR) y time-stop 180 velas. 05-22 UTC, sin fines de semana. Backtest 1 año: 52 trades, 65.4% WR, +13.2R, PF 1.69, Max DD 4.7R y positivo en los 4 trimestres.",
     defaultParams: { minScore: 60 },
     killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     triggerTf: "M1",
