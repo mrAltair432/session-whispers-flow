@@ -25,7 +25,8 @@ import type { Signal } from "../signal-engine";
 //        y time-stop de 180 velas M1 (3 h).
 // - Horario 05:00–21:59 UTC, sin fines de semana.
 //
-// Resultado 1 año: 70 trades, 62.9% WR, +23.5R, PF 1.87, Max DD 4.5R.
+// Resultado 1 año: 52 trades, 65.4% WR, +13.2R, PF 1.69, Max DD 4.7R,
+// positivo en los 4 trimestres (vs −2.028R de la v1).
 export function evaluateGoldScalping(
   m1: Candle[],
   m5: Candle[],
@@ -90,8 +91,8 @@ export function evaluateGoldScalping(
   const closePos = (last.close - last.low) / range; // 0..1
   const wick = below ? lowerWick : upperWick;
 
-  if (wick / range < 0.45) return null;   // mecha larga del lado extendido
-  if (body / range > 0.40) return null;   // cuerpo pequeño: rebote sin fuerza
+  if (wick / range < 0.55) return null;   // mecha larga del lado extendido
+  if (body / range > 0.50) return null;   // cuerpo contenido: rebote sin fuerza
   if (below) {
     if (!(last.close > last.open && closePos > 0.75)) return null;
   } else {
