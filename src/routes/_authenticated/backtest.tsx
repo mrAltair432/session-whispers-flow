@@ -1108,7 +1108,10 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
       ) : (
         <div className="grid lg:grid-cols-3 gap-4">
           <div className="lg:col-span-3">
-            <h4 className="text-xs uppercase text-muted-foreground mb-2">Equity (R acumulado)</h4>
+            <h4 className="text-xs uppercase text-muted-foreground mb-2">
+              Equity (R acumulado) · <span className="text-primary">balance</span> vs{" "}
+              <span className="text-emerald-400">flotante (peor/mejor)</span>
+            </h4>
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={m.equityCurve}>
@@ -1116,7 +1119,9 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
                   <XAxis dataKey="trade" stroke="var(--muted-foreground)" fontSize={11} />
                   <YAxis stroke="var(--muted-foreground)" fontSize={11} />
                   <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
-                  <Line type="monotone" dataKey="equityR" stroke="var(--primary)" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="floatingHighR" name="Flotante máx" stroke="var(--chart-2, #34d399)" strokeWidth={1} dot={false} opacity={0.5} />
+                  <Line type="monotone" dataKey="floatingLowR" name="Flotante mín" stroke="#34d399" strokeWidth={1} dot={false} opacity={0.8} />
+                  <Line type="monotone" dataKey="equityR" name="Balance" stroke="var(--primary)" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
