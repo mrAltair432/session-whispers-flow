@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo } from "react";
-import { fetchXauPrices } from "@/lib/prices.functions";
+import { fetchMarketData } from "@/lib/prices.functions";
 import { getMyConfig, getDailyStats } from "@/lib/config.functions";
 import { listMyStrategyParams } from "@/lib/strategy-params.functions";
 import { generateSignal } from "@/lib/signal-engine";
@@ -25,16 +25,16 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 function Dashboard() {
   const navigate = useNavigate();
-  const fetchPrices = useServerFn(fetchXauPrices);
+  const fetchPrices = useServerFn(fetchMarketData);
   const fetchConfig = useServerFn(getMyConfig);
   const fetchStats = useServerFn(getDailyStats);
   const fetchStrategyParams = useServerFn(listMyStrategyParams);
 
   const pricesQ = useQuery({
-    queryKey: ["xau-prices"],
+    queryKey: ["xau-market-data"],
     queryFn: () => fetchPrices(),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
   });
   const configQ = useQuery({ queryKey: ["my-config"], queryFn: () => fetchConfig() });
   const statsQ = useQuery({ queryKey: ["daily-stats"], queryFn: () => fetchStats(), refetchInterval: 60_000 });
@@ -139,6 +139,28 @@ function Dashboard() {
         {data?.error && (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 text-destructive-foreground px-4 py-3 text-sm">
             <strong>Datos no disponibles:</strong> {data.error}
+          </div>
+        )}
+
+        {data && (
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span
+              className={`px-2 py-1 rounded border font-medium ${
+                data.source === "broker"
+                  ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/40"
+                  : "bg-amber-500/15 text-amber-400 border-amber-500/40"
+              }`}
+            >
+              {data.source === "broker"
+                ? `Datos del broker (MT5${data.broker.name ? ` · ${data.broker.name}` : ""})`
+                : "Datos de Twelve Data (respaldo)"}
+            </span>
+            {data.source === "broker" && data.broker.spreadUsd != null && (
+              <span className="text-muted-foreground font-mono">spread {data.broker.spreadUsd.toFixed(2)} USD</span>
+            )}
+            {data.source !== "broker" && data.broker.reason && (
+              <span className="text-muted-foreground">Feed del EA: {data.broker.reason}</span>
+            )}
           </div>
         )}
 
@@ -254,7 +276,7 @@ function Dashboard() {
         </div>
 
         <footer className="text-center text-xs text-muted-foreground pt-6 pb-4">
-          Datos cada 60s · Twelve Data · Solo análisis — la ejecución real va en MT5.
+          Datos cada 30s · Broker MT5 (vía EA) con respaldo Twelve Data · Solo análisis — la ejecución real va en MT5.
         </footer>
       </main>
     </div>
