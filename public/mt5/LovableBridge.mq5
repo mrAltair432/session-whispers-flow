@@ -18,7 +18,7 @@
 //|   4) En la pestaña "Inputs" pegar el token del EA.                |
 //+------------------------------------------------------------------+
 #property copyright "Lovable"
-#property version   "0.140"
+#property version   "0.150"
 #property strict
 
 input string InpBaseUrl      = "https://session-whispers-flow.lovable.app";
@@ -32,7 +32,7 @@ input bool   InpDiagnosticOnInit = true;              // Prueba conexión/token 
 input bool   InpPushBars     = true;                  // Enviar velas del broker al dashboard
 input int    InpPushBarsSec  = 30;                    // Cada cuántos segundos enviar M1
 input int    InpBarsM1       = 400;                   // Velas M1 por envío
-input int    InpBarsHigherTf = 250;                   // Velas por TF superior
+input int    InpBarsHigherTf = 200;                   // Velas por TF superior
 
 #include <Trade\Trade.mqh>
 CTrade trade;
@@ -52,6 +52,7 @@ TradeRecord g_trades[];
 datetime g_lastPoll = 0;
 datetime g_lastPushM1 = 0;
 datetime g_lastPushHtf = 0;
+int      g_htfIndex = 0;
 int g_emptyPolls = 0;
 
 string WithToken(string url)
@@ -92,7 +93,7 @@ string HttpGet(string url, int &outStatus)
    char post[]; char result[]; string headers = "X-EA-Token: " + InpEaToken + "\r\n";
    string respHeaders;
    ResetLastError();
-   int res = WebRequest("GET", WithToken(url), headers, 5000, post, result, respHeaders);
+   int res = WebRequest("GET", WithToken(url), headers, 15000, post, result, respHeaders);
    outStatus = res;
    if(res == -1) {
       int err = GetLastError();
@@ -112,7 +113,7 @@ bool HttpPostJson(string url, string body)
    char result[]; string respHeaders;
    string headers = "X-EA-Token: " + InpEaToken + "\r\nContent-Type: application/json\r\n";
    ResetLastError();
-   int res = WebRequest("POST", WithToken(url), headers, 5000, post, result, respHeaders);
+   int res = WebRequest("POST", WithToken(url), headers, 30000, post, result, respHeaders);
    if(res == -1) {
       int err = GetLastError();
       PrintFormat("LovableBridge WebRequest POST falló. err=%d. Revisa Tools -> Options -> Expert Advisors -> Allow WebRequest: %s", err, InpBaseUrl);
@@ -354,14 +355,19 @@ void PushBarsCycle()
       PushBars("M1", PERIOD_M1, InpBarsM1);
    }
 
-   // TFs superiores: cada 5 minutos es más que suficiente.
-   if(now - g_lastPushHtf >= 300)
+   // TFs superiores: uno por ciclo (cada 20s) para no bloquear el EA con
+   // cuatro WebRequests grandes seguidos. Ciclo completo ~80s.
+   if(now - g_lastPushHtf >= 20)
    {
       g_lastPushHtf = now;
-      PushBars("M15", PERIOD_M15, InpBarsHigherTf);
-      PushBars("H1",  PERIOD_H1,  InpBarsHigherTf);
-      PushBars("H4",  PERIOD_H4,  InpBarsHigherTf);
-      PushBars("D1",  PERIOD_D1,  120);
+      switch(g_htfIndex)
+      {
+         case 0: PushBars("M15", PERIOD_M15, InpBarsHigherTf); break;
+         case 1: PushBars("H1",  PERIOD_H1,  InpBarsHigherTf); break;
+         case 2: PushBars("H4",  PERIOD_H4,  InpBarsHigherTf); break;
+         default: PushBars("D1", PERIOD_D1,  120); break;
+      }
+      g_htfIndex = (g_htfIndex + 1) % 4;
    }
 }
 
@@ -389,5 +395,7 @@ void PushBars(string tfName, ENUM_TIMEFRAMES period, int count)
 
    string url = InpBaseUrl + "/api/public/mt5-bars";
    if(!HttpPostJson(url, json))
-      PrintFormat("LovableBridge: envío de velas %s falló", tfName);
+      PrintFormat("LovableBridge: envío de velas %s falló (%d velas, %d chars)", tfName, copied, StringLen(json));
+   else
+      PrintFormat("LovableBridge: velas %s enviadas (%d)", tfName, copied);
 }
