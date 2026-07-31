@@ -123,17 +123,27 @@ const BROKER_TF_LIMITS: Record<TfKey, number> = {
 // permitimos una ventana amplia y avisamos en la UI.
 const BROKER_FRESH_MAX_MIN = 15;
 
+type FeedStatusRow = {
+  broker: string | null;
+  spread_usd: number | null;
+  last_push_at: string | null;
+  last_bar_time: string | null;
+};
+
+type BrokerBarRow = {
+  bar_time: string;
+  open: number | string;
+  high: number | string;
+  low: number | string;
+  close: number | string;
+};
+
 export const fetchMarketData = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }): Promise<FetchMarketDataResult> => {
     const bars: BarsByTf = {};
     const counts: Partial<Record<TfKey, number>> = {};
-    let status: {
-      broker: string | null;
-      spread_usd: number | null;
-      last_push_at: string | null;
-      last_bar_time: string | null;
-    } | null = null;
+    let status: FeedStatusRow | null = null;
 
     try {
       const { data: st } = await context.supabase
@@ -141,7 +151,7 @@ export const fetchMarketData = createServerFn({ method: "GET" })
         .select("broker, spread_usd, last_push_at, last_bar_time")
         .eq("user_id", context.userId)
         .maybeSingle();
-      status = (st as typeof status) ?? null;
+      status = (st as unknown as FeedStatusRow | null) ?? null;
 
       const tfs: TfKey[] = ["M1", "M5", "M15", "H1", "H4", "D1"];
       const results = await Promise.all(
@@ -156,10 +166,10 @@ export const fetchMarketData = createServerFn({ method: "GET" })
         ),
       );
       tfs.forEach((tf, i) => {
-        const rows = results[i].data ?? [];
+        const rows = (results[i].data ?? []) as unknown as BrokerBarRow[];
         const candles: Candle[] = rows
           .map((r) => ({
-            time: Math.floor(new Date(r.bar_time as string).getTime() / 1000),
+            time: Math.floor(new Date(r.bar_time).getTime() / 1000),
             open: Number(r.open),
             high: Number(r.high),
             low: Number(r.low),
