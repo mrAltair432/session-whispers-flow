@@ -337,3 +337,57 @@ void ReportError(string id, string msg)
    HttpPostJson(url, body);
    Print("Signal ", id, " → ERROR: ", msg);
 }
+
+//+------------------------------------------------------------------+
+//|  Envío de velas del broker al dashboard (v0.14)                   |
+//|  El dashboard prefiere estos precios sobre el proveedor externo,   |
+//|  porque son los mismos que ejecuta tu cuenta (spread y sesión).    |
+//+------------------------------------------------------------------+
+void PushBarsCycle()
+{
+   if(!InpPushBars) return;
+   datetime now = TimeCurrent();
+
+   if(now - g_lastPushM1 >= MathMax(10, InpPushBarsSec))
+   {
+      g_lastPushM1 = now;
+      PushBars("M1", PERIOD_M1, InpBarsM1);
+   }
+
+   // TFs superiores: cada 5 minutos es más que suficiente.
+   if(now - g_lastPushHtf >= 300)
+   {
+      g_lastPushHtf = now;
+      PushBars("M15", PERIOD_M15, InpBarsHigherTf);
+      PushBars("H1",  PERIOD_H1,  InpBarsHigherTf);
+      PushBars("H4",  PERIOD_H4,  InpBarsHigherTf);
+      PushBars("D1",  PERIOD_D1,  120);
+   }
+}
+
+void PushBars(string tfName, ENUM_TIMEFRAMES period, int count)
+{
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false);
+   int copied = CopyRates(InpSymbol, period, 0, count, rates);
+   if(copied <= 0) { PrintFormat("LovableBridge: CopyRates %s falló err=%d", tfName, GetLastError()); return; }
+
+   MqlTick tick; double spread = 0;
+   if(SymbolInfoTick(InpSymbol, tick)) spread = tick.ask - tick.bid;
+
+   string json = "{\"symbol\":\"" + InpSymbol + "\",\"tf\":\"" + tfName + "\"," +
+                 "\"broker\":\"" + AccountInfoString(ACCOUNT_COMPANY) + "\"," +
+                 StringFormat("\"spread\":%.3f,", spread) + "\"bars\":[";
+
+   for(int i = 0; i < copied; i++)
+   {
+      if(i > 0) json += ",";
+      json += StringFormat("[%I64d,%.3f,%.3f,%.3f,%.3f]",
+                           (long)rates[i].time, rates[i].open, rates[i].high, rates[i].low, rates[i].close);
+   }
+   json += "]}";
+
+   string url = InpBaseUrl + "/api/public/mt5-bars";
+   if(!HttpPostJson(url, json))
+      PrintFormat("LovableBridge: envío de velas %s falló", tfName);
+}
