@@ -48,6 +48,8 @@ export type BacktestTrade = {
   exit: number;
   rMultiple: number;
   outcome: "tp1" | "tp2" | "tp3" | "sl" | "be" | "timeout";
+  maeR: number; // peor excursión flotante (R, negativo)
+  mfeR: number; // mejor excursión flotante (R, positivo)
   hourUTC: number;
   weekday: number; // 0=Sun..6=Sat
   features: number[]; // vector para el clasificador IA (orden en FEATURE_NAMES)
@@ -112,7 +114,7 @@ export type BacktestMetrics = {
   outcomeCounts: Record<BacktestTrade["outcome"], number>;
   byHour: Array<{ hour: number; trades: number; totalR: number; winrate: number }>;
   byWeekday: Array<{ weekday: number; trades: number; totalR: number; winrate: number }>;
-  equityCurve: Array<{ trade: number; equityR: number }>;
+  equityCurve: Array<{ trade: number; equityR: number; floatingLowR: number; floatingHighR: number }>;
 };
 
 export type BacktestResult = {
@@ -170,7 +172,7 @@ export function simulateTrade(
   costPerSideUsd: number,
   management?: { breakEvenAtR?: number; timeStopBars?: number; trailAfterR?: number; trailStepAtrMult?: number },
   atrArr?: number[],
-): { exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number } {
+): { exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number; maeR: number; mfeR: number } {
   const initRisk = Math.abs(entry - initialSL);
   let sl = initialSL;
   let tp1Hit = false;
@@ -188,6 +190,14 @@ export function simulateTrade(
   const trailingOn = !!(trailAfterR && trailStepMult && atrArr && atrArr.length);
   let beMoved = false;
   let bestPrice = entry; // MFE para trailing escalonado
+  let maeR = 0;
+  let mfeR = 0;
+  const track = (c: Candle) => {
+    const up = bias === "long" ? (c.high - entry) / initRisk : (entry - c.low) / initRisk;
+    const dn = bias === "long" ? (c.low - entry) / initRisk : (entry - c.high) / initRisk;
+    if (up > mfeR) mfeR = up;
+    if (dn < maeR) maeR = dn;
+  };
 
   const closeRemaining = (price: number, time: number, outcome: BacktestTrade["outcome"]) => {
     const moveR = bias === "long" ? (price - entry) / initRisk : (entry - price) / initRisk;
@@ -195,12 +205,13 @@ export function simulateTrade(
     // Coste de cierre proporcional al tamaño que queda
     realizedR -= remaining * costR;
     remaining = 0;
-    return { exit: price, rMultiple: realizedR, outcome, closeTime: time };
+    return { exit: price, rMultiple: realizedR, outcome, closeTime: time, maeR, mfeR };
   };
 
   const end = Math.min(m15.length - 1, entryIdx + maxHoldBars);
   for (let i = entryIdx + 1; i <= end; i++) {
     const c = m15[i];
+    track(c);
     // Time-stop (H): si no ha llegado a TP1 tras N barras, cierre a mercado.
     if (!tp1Hit && timeStopBars && (i - entryIdx) >= timeStopBars) {
       return closeRemaining(c.open, c.time, "timeout");
@@ -254,7 +265,7 @@ export function simulateTrade(
         realizedR += 0.2 * 3;
         realizedR -= 0.2 * costR; // coste del cierre runner
         remaining = 0;
-        return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time };
+        return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
       }
     } else {
       if (trailingOn) {
@@ -291,7 +302,7 @@ export function simulateTrade(
         realizedR += 0.2 * 3;
         realizedR -= 0.2 * costR;
         remaining = 0;
-        return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time };
+        return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
       }
     }
   }
@@ -309,7 +320,9 @@ function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
   let curWin = 0, curLoss = 0, longestWin = 0, longestLoss = 0;
   const byHourMap = new Map<number, { trades: number; totalR: number; wins: number }>();
   const byWdMap = new Map<number, { trades: number; totalR: number; wins: number }>();
-  const equityCurve: Array<{ trade: number; equityR: number }> = [{ trade: 0, equityR: 0 }];
+  const equityCurve: Array<{ trade: number; equityR: number; floatingLowR: number; floatingHighR: number }> = [
+    { trade: 0, equityR: 0, floatingLowR: 0, floatingHighR: 0 },
+  ];
   const rs: number[] = [];
 
   trades.forEach((t, i) => {
@@ -321,7 +334,13 @@ function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
     else { breakeven += 1; curWin = 0; curLoss = 0; }
     longestWin = Math.max(longestWin, curWin);
     longestLoss = Math.max(longestLoss, curLoss);
-    equityCurve.push({ trade: i + 1, equityR: totalR });
+    const prevEquity = totalR - t.rMultiple;
+    equityCurve.push({
+      trade: i + 1,
+      equityR: totalR,
+      floatingLowR: prevEquity + Math.min(0, t.maeR ?? 0),
+      floatingHighR: prevEquity + Math.max(0, t.mfeR ?? 0),
+    });
     const hRec = byHourMap.get(t.hourUTC) ?? { trades: 0, totalR: 0, wins: 0 };
     hRec.trades += 1; hRec.totalR += t.rMultiple; if (t.rMultiple > 0) hRec.wins += 1;
     byHourMap.set(t.hourUTC, hRec);
@@ -498,6 +517,8 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
       exit: sim.exit,
       rMultiple: sim.rMultiple,
       outcome: sim.outcome,
+      maeR: sim.maeR,
+      mfeR: sim.mfeR,
       hourUTC,
       weekday,
       features: signal.features
