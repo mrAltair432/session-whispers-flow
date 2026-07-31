@@ -1145,7 +1145,7 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             </h4>
             <div className="h-32">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={r.trades.map((t, i) => ({ trade: i + 1, mfeR: t.mfeR ?? 0, maeR: t.maeR ?? 0 }))}>
+                <BarChart data={result.trades.map((t, i) => ({ trade: i + 1, mfeR: t.mfeR ?? 0, maeR: t.maeR ?? 0 }))}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="trade" stroke="var(--muted-foreground)" fontSize={11} />
                   <YAxis stroke="var(--muted-foreground)" fontSize={11} />
