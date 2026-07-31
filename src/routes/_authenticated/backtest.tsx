@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2, Split } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
+  ComposedChart, Area, ReferenceLine,
 } from "recharts";
 
 export const Route = createFileRoute("/_authenticated/backtest")({
@@ -1114,15 +1115,45 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
             </h4>
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={m.equityCurve}>
+                <ComposedChart
+                  data={m.equityCurve.map((p) => ({
+                    ...p,
+                    floatingBand: [p.floatingLowR, p.floatingHighR] as [number, number],
+                  }))}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                   <XAxis dataKey="trade" stroke="var(--muted-foreground)" fontSize={11} />
                   <YAxis stroke="var(--muted-foreground)" fontSize={11} />
                   <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
-                  <Line type="monotone" dataKey="floatingHighR" name="Flotante máx" stroke="var(--chart-2, #34d399)" strokeWidth={1} dot={false} opacity={0.5} />
-                  <Line type="monotone" dataKey="floatingLowR" name="Flotante mín" stroke="#34d399" strokeWidth={1} dot={false} opacity={0.8} />
+                  <Area
+                    type="monotone"
+                    dataKey="floatingBand"
+                    name="Rango flotante"
+                    stroke="#34d399"
+                    strokeWidth={1}
+                    fill="#34d399"
+                    fillOpacity={0.28}
+                    isAnimationActive={false}
+                  />
                   <Line type="monotone" dataKey="equityR" name="Balance" stroke="var(--primary)" strokeWidth={2} dot={false} />
-                </LineChart>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <h4 className="text-xs uppercase text-muted-foreground mt-4 mb-2">
+              Flotante por trade (R) · <span className="text-emerald-400">MFE máx</span> /{" "}
+              <span className="text-red-400">MAE peor</span>
+            </h4>
+            <div className="h-32">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={result.trades.map((t, i) => ({ trade: i + 1, mfeR: t.mfeR ?? 0, maeR: t.maeR ?? 0 }))}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="trade" stroke="var(--muted-foreground)" fontSize={11} />
+                  <YAxis stroke="var(--muted-foreground)" fontSize={11} />
+                  <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)" }} />
+                  <ReferenceLine y={0} stroke="var(--border)" />
+                  <Bar dataKey="mfeR" name="MFE" fill="#34d399" isAnimationActive={false} />
+                  <Bar dataKey="maeR" name="MAE" fill="#f87171" isAnimationActive={false} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
