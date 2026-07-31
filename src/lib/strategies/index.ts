@@ -5,6 +5,7 @@ import { evaluateFiboScalping } from "./fibo-scalping";
 import { evaluateGoldScalping } from "./gold-scalping";
 import { evaluateEmaCrossM1 } from "./ema-cross-m1";
 import { evaluateStraddleBreakout } from "./straddle-breakout";
+import { evaluateFiboGridCent } from "./fibo-grid-cent";
 import type { TfKey } from "../csv-parser";
 
 export type EngineKey =
@@ -13,7 +14,8 @@ export type EngineKey =
   | "fibo_scalping"
   | "gold_scalping"
   | "ema_cross_m1"
-  | "straddle_breakout";
+  | "straddle_breakout"
+  | "fibo_grid_cent";
 
 export type StrategyParams = {
   minScore?: number;
@@ -30,6 +32,11 @@ export type StrategyEngine = {
   description: string;
   defaultParams: StrategyParams;
   killzoneHoursUTC: number[]; // informativo
+  // Si es false, la estrategia NO se envía al EA salvo que el usuario la
+  // active explícitamente en /settings (motores experimentales / alto riesgo).
+  defaultEnabled?: boolean;
+  // Aviso mostrado en la UI para motores de alto riesgo.
+  riskNote?: string;
   // TF que dispara la evaluación (se itera bar por bar en el backtest y
   // define la granularidad de simulación de SL/TP).
   triggerTf: TfKey;
@@ -119,6 +126,33 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     requiredTfs: ["M1", "M5"],
     evaluate: (bars, params) =>
       evaluateStraddleBreakout(bars.M1 ?? [], bars.M5 ?? [], (params.minScore as number) ?? 65),
+  },
+  fibo_grid_cent: {
+    key: "fibo_grid_cent",
+    name: "Fibo 61.8 Grid Cent (XAUUSD)",
+    shortName: "E7 · Fibo 61.8 Cent",
+    description:
+      "Réplica optimizada del 'Fibonacci 61.8 EA' (MQL5 178321) para cuentas CENT de prueba. Sesgo H4 + swing H1, entrada en la zona Fibo 0.5-0.786 con RSI(14) 35/75, Awesome Oscillator y filtro MA(15m). Régimen ATR M15 (bajo 2.5 / alto 4.5) que reduce o bloquea el grid. Mejoras frente al original: grid FINITO sin martingala (8 niveles cada 0.5·ATR, mismo lote), SL real por operación en 0.786, caducidad de pendientes a 66 min y guardrails diarios +3R/-2R en vez del SL global del 20 % de la cuenta. Desactivada por defecto.",
+    defaultParams: {
+      minScore: 62,
+      fiboLevel: 0.618,
+      maxOrders: 8,
+      gridStepAtr: 0.5,
+      atrLowRisk: 2.5,
+      atrHighRisk: 4.5,
+      rsiLow: 35,
+      rsiHigh: 75,
+      expireMinutes: 66,
+      dailyTargetR: 3,
+      dailyLossLimitR: 2,
+    },
+    killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    triggerTf: "M15",
+    requiredTfs: ["H4", "H1", "M15"],
+    defaultEnabled: false,
+    riskNote: "Alto riesgo · sólo cuenta CENT de pruebas",
+    evaluate: (bars, params) =>
+      evaluateFiboGridCent(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], params as never),
   },
 };
 
