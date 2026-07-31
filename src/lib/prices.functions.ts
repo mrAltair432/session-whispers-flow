@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { TfKey } from "./csv-parser";
 import { aggregateCandles } from "./csv-parser";
 
