@@ -42,6 +42,9 @@ export type StrategyEngine = {
   triggerTf: TfKey;
   // TFs que la estrategia necesita presentes (subset de M1..H4).
   requiredTfs: TfKey[];
+  // Overrides del simulador (cooldown entre trades y hold máximo en barras del
+  // trigger TF). Útil para motores tipo grid que reevalúan constantemente.
+  backtestDefaults?: { cooldownBars?: number; maxHoldBars?: number };
   // Nueva API: recibe un mapa de bars ya sliced hasta el tiempo del trigger bar.
   evaluate(bars: Bars, params: StrategyParams): Signal;
 };
@@ -138,8 +141,8 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
       fiboLevel: 0.618,
       maxOrders: 100,
       gridStepAtr: 0.35,
-      atrLowRisk: 2.5,
-      atrHighRisk: 4.5,
+      atrMediumRatio: 1.3,
+      atrBlockRatio: 2.4,
       rsiLow: 35,
       rsiHigh: 75,
       expireMinutes: 66,
@@ -151,12 +154,15 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
       requireAo: false,
     },
     killzoneHoursUTC: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
-    triggerTf: "M15",
-    requiredTfs: ["H4", "H1", "M15"],
+    triggerTf: "M1",
+    requiredTfs: ["H4", "H1", "M15", "M1"],
+    // El EA reevalúa cada minuto: cooldown corto y hold largo para que el
+    // precio respire (24 h de barras M1).
+    backtestDefaults: { cooldownBars: 30, maxHoldBars: 1440 },
     defaultEnabled: false,
     riskNote: "Alto riesgo · sólo cuenta CENT de pruebas",
     evaluate: (bars, params) =>
-      evaluateFiboGridCent(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], params as never),
+      evaluateFiboGridCent(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], bars.M1, params as never),
   },
 };
 

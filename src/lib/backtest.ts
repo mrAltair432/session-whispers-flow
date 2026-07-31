@@ -382,8 +382,10 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
   // Defaults escalan según TF trigger: M1 requiere holds/cooldowns más largos
   // en bars pero más cortos en tiempo real (24h M1 = 1440 bars).
   const tfMinutes: Record<TfKey, number> = { M1: 1, M5: 5, M15: 15, H1: 60, H4: 240, D1: 1440 };
-  const defaultMaxHold = Math.max(20, Math.round((24 * 60) / tfMinutes[triggerTf])); // ~24h
-  const defaultCooldown = Math.max(3, Math.round((4 * 60) / tfMinutes[triggerTf]));  // ~4h
+  const defaultMaxHold = strategy.backtestDefaults?.maxHoldBars
+    ?? Math.max(20, Math.round((24 * 60) / tfMinutes[triggerTf])); // ~24h
+  const defaultCooldown = strategy.backtestDefaults?.cooldownBars
+    ?? Math.max(3, Math.round((4 * 60) / tfMinutes[triggerTf]));   // ~4h
   const warmup = opts.warmupBars ?? (triggerTf === "M1" ? 300 : 100);
   const maxHold = opts.maxHoldBars ?? defaultMaxHold;
   const cooldown = opts.cooldownBars ?? defaultCooldown;
@@ -464,10 +466,20 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     // cierre parcial/total), evitando distorsionar SL/TP absolutos.
     const entry = entryBar.open;
     const dist = Math.abs(signal.entry - signal.stopLoss);
+    // Respetamos los ratios R que declara la estrategia (por defecto 1R/2R/3R).
+    // Motores tipo grid usan TPs cortos (<1R) con SL holgado, y forzar 1R/2R/3R
+    // deformaría por completo su perfil de resultados.
+    const rr = (tp: number) => {
+      const v = Math.abs(tp - signal.entry) / dist;
+      return Number.isFinite(v) && v > 0 ? v : 0;
+    };
+    const r1 = rr(signal.tp1) || 1;
+    const r2 = rr(signal.tp2) || r1 * 2;
+    const r3 = rr(signal.tp3) || r1 * 3;
     const sl = signal.bias === "long" ? entry - dist : entry + dist;
-    const tp1 = signal.bias === "long" ? entry + dist : entry - dist;
-    const tp2 = signal.bias === "long" ? entry + dist * 2 : entry - dist * 2;
-    const tp3 = signal.bias === "long" ? entry + dist * 3 : entry - dist * 3;
+    const tp1 = signal.bias === "long" ? entry + dist * r1 : entry - dist * r1;
+    const tp2 = signal.bias === "long" ? entry + dist * r2 : entry - dist * r2;
+    const tp3 = signal.bias === "long" ? entry + dist * r3 : entry - dist * r3;
 
     const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd, signal.management, triggerAtr);
     const de = new Date(entryBar.time * 1000);
