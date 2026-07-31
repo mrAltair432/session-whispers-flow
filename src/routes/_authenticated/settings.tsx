@@ -202,7 +202,7 @@ function SettingsPage() {
                 onChange={(e) => setForm({ ...form, max_daily_loss_pct: parseFloat(e.target.value) || 1.5 })} />
             </Field>
             <Field label="Operaciones máximas por día" hint="Tu regla: 2.">
-              <Input type="number" min="1" max="10" value={form.max_trades_per_day}
+              <Input type="number" min="1" max="100" value={form.max_trades_per_day}
                 onChange={(e) => setForm({ ...form, max_trades_per_day: parseInt(e.target.value) || 2 })} />
             </Field>
           </Section>

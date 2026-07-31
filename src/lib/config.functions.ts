@@ -18,7 +18,7 @@ const updateSchema = z.object({
   balance: z.number().min(1).max(10_000_000),
   risk_per_trade: z.number().min(0.05).max(5),
   max_daily_loss_pct: z.number().min(0.1).max(10),
-  max_trades_per_day: z.number().int().min(1).max(10),
+  max_trades_per_day: z.number().int().min(1).max(100),
   telegram_chat_id: z.string().nullable(),
   telegram_enabled: z.boolean(),
   auto_alert_high_confidence: z.boolean(),
