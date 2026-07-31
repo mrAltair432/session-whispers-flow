@@ -148,14 +148,18 @@ function Dashboard() {
               className={`px-2 py-1 rounded border font-medium ${
                 data.source === "broker"
                   ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/40"
-                  : "bg-amber-500/15 text-amber-400 border-amber-500/40"
+                  : data.source === "hybrid"
+                    ? "bg-sky-500/15 text-sky-400 border-sky-500/40"
+                    : "bg-amber-500/15 text-amber-400 border-amber-500/40"
               }`}
             >
               {data.source === "broker"
                 ? `Datos del broker (MT5${data.broker.name ? ` · ${data.broker.name}` : ""})`
-                : "Datos de Twelve Data (respaldo)"}
+                : data.source === "hybrid"
+                  ? `Datos mixtos (MT5${data.broker.name ? ` · ${data.broker.name}` : ""} + Twelve Data)`
+                  : "Datos de Twelve Data (respaldo)"}
             </span>
-            {data.source === "broker" && data.broker.spreadUsd != null && (
+            {data.source !== "twelvedata" && data.broker.spreadUsd != null && (
               <span className="text-muted-foreground font-mono">spread {data.broker.spreadUsd.toFixed(2)} USD</span>
             )}
             {data.source !== "broker" && data.broker.reason && (
