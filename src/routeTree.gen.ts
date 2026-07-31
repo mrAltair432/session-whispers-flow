@@ -19,6 +19,7 @@ import { Route as AuthenticatedBacktestRouteImport } from './routes/_authenticat
 import { Route as ApiPublicMt5SignalsRouteImport } from './routes/api/public/mt5-signals'
 import { Route as ApiPublicMt5FiboEaRouteImport } from './routes/api/public/mt5-fibo-ea'
 import { Route as ApiPublicMt5ExportRouteImport } from './routes/api/public/mt5-export'
+import { Route as ApiPublicMt5BarsRouteImport } from './routes/api/public/mt5-bars'
 import { Route as ApiPublicEconCalendarRouteImport } from './routes/api/public/econ-calendar'
 import { Route as ApiPublicHooksEvaluateSignalsRouteImport } from './routes/api/public/hooks/evaluate-signals'
 
@@ -71,6 +72,11 @@ const ApiPublicMt5ExportRoute = ApiPublicMt5ExportRouteImport.update({
   path: '/api/public/mt5-export',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicMt5BarsRoute = ApiPublicMt5BarsRouteImport.update({
+  id: '/api/public/mt5-bars',
+  path: '/api/public/mt5-bars',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicEconCalendarRoute = ApiPublicEconCalendarRouteImport.update({
   id: '/api/public/econ-calendar',
   path: '/api/public/econ-calendar',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/history': typeof AuthenticatedHistoryRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/econ-calendar': typeof ApiPublicEconCalendarRoute
+  '/api/public/mt5-bars': typeof ApiPublicMt5BarsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
   '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
   '/api/public/mt5-signals': typeof ApiPublicMt5SignalsRoute
@@ -104,6 +111,7 @@ export interface FileRoutesByTo {
   '/history': typeof AuthenticatedHistoryRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/api/public/econ-calendar': typeof ApiPublicEconCalendarRoute
+  '/api/public/mt5-bars': typeof ApiPublicMt5BarsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
   '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
   '/api/public/mt5-signals': typeof ApiPublicMt5SignalsRoute
@@ -119,6 +127,7 @@ export interface FileRoutesById {
   '/_authenticated/history': typeof AuthenticatedHistoryRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/api/public/econ-calendar': typeof ApiPublicEconCalendarRoute
+  '/api/public/mt5-bars': typeof ApiPublicMt5BarsRoute
   '/api/public/mt5-export': typeof ApiPublicMt5ExportRoute
   '/api/public/mt5-fibo-ea': typeof ApiPublicMt5FiboEaRoute
   '/api/public/mt5-signals': typeof ApiPublicMt5SignalsRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/settings'
     | '/api/public/econ-calendar'
+    | '/api/public/mt5-bars'
     | '/api/public/mt5-export'
     | '/api/public/mt5-fibo-ea'
     | '/api/public/mt5-signals'
@@ -147,6 +157,7 @@ export interface FileRouteTypes {
     | '/history'
     | '/settings'
     | '/api/public/econ-calendar'
+    | '/api/public/mt5-bars'
     | '/api/public/mt5-export'
     | '/api/public/mt5-fibo-ea'
     | '/api/public/mt5-signals'
@@ -161,6 +172,7 @@ export interface FileRouteTypes {
     | '/_authenticated/history'
     | '/_authenticated/settings'
     | '/api/public/econ-calendar'
+    | '/api/public/mt5-bars'
     | '/api/public/mt5-export'
     | '/api/public/mt5-fibo-ea'
     | '/api/public/mt5-signals'
@@ -172,6 +184,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiPublicEconCalendarRoute: typeof ApiPublicEconCalendarRoute
+  ApiPublicMt5BarsRoute: typeof ApiPublicMt5BarsRoute
   ApiPublicMt5ExportRoute: typeof ApiPublicMt5ExportRoute
   ApiPublicMt5FiboEaRoute: typeof ApiPublicMt5FiboEaRoute
   ApiPublicMt5SignalsRoute: typeof ApiPublicMt5SignalsRoute
@@ -250,6 +263,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicMt5ExportRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/mt5-bars': {
+      id: '/api/public/mt5-bars'
+      path: '/api/public/mt5-bars'
+      fullPath: '/api/public/mt5-bars'
+      preLoaderRoute: typeof ApiPublicMt5BarsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/econ-calendar': {
       id: '/api/public/econ-calendar'
       path: '/api/public/econ-calendar'
@@ -289,6 +309,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiPublicEconCalendarRoute: ApiPublicEconCalendarRoute,
+  ApiPublicMt5BarsRoute: ApiPublicMt5BarsRoute,
   ApiPublicMt5ExportRoute: ApiPublicMt5ExportRoute,
   ApiPublicMt5FiboEaRoute: ApiPublicMt5FiboEaRoute,
   ApiPublicMt5SignalsRoute: ApiPublicMt5SignalsRoute,
@@ -297,13 +318,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

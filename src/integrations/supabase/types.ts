@@ -14,6 +14,75 @@ export type Database = {
   }
   public: {
     Tables: {
+      broker_bars: {
+        Row: {
+          bar_time: string
+          close: number
+          high: number
+          low: number
+          open: number
+          symbol: string
+          tf: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          bar_time: string
+          close: number
+          high: number
+          low: number
+          open: number
+          symbol?: string
+          tf: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          bar_time?: string
+          close?: number
+          high?: number
+          low?: number
+          open?: number
+          symbol?: string
+          tf?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      broker_feed_status: {
+        Row: {
+          bars_received: number
+          broker: string | null
+          last_bar_time: string | null
+          last_push_at: string | null
+          spread_usd: number | null
+          symbol: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          bars_received?: number
+          broker?: string | null
+          last_bar_time?: string | null
+          last_push_at?: string | null
+          spread_usd?: number | null
+          symbol?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          bars_received?: number
+          broker?: string | null
+          last_bar_time?: string | null
+          last_push_at?: string | null
+          spread_usd?: number | null
+          symbol?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       daily_stats: {
         Row: {
           blocked: boolean

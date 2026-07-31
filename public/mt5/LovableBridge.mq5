@@ -1,9 +1,11 @@
 //+------------------------------------------------------------------+
-//|  LovableBridge.mq5  —  EA "puente tonto" v0.13                   |
+//|  LovableBridge.mq5  —  EA "puente tonto" v0.14                   |
 //|  Ejecuta las señales que publica el dashboard en la tabla        |
 //|  mt5_signals. NO decide nada por sí mismo.                       |
-//|  Ahora también reporta cierres reales (SL, TP, manual) para que    |
-//|  el dashboard calcule P&L y WinRate con datos reales de MT5.       |
+//|  Reporta cierres reales (SL, TP, manual) para que el dashboard    |
+//|  calcule P&L y WinRate con datos reales de MT5, y ADEMÁS envía    |
+//|  las velas del broker (M1..D1) para que el análisis del           |
+//|  dashboard use exactamente los precios de tu cuenta.              |
 //|                                                                  |
 //|  Instalación (una sola vez):                                     |
 //|   1) MT5 → File → Open Data Folder → MQL5/Experts/                |
@@ -16,7 +18,7 @@
 //|   4) En la pestaña "Inputs" pegar el token del EA.                |
 //+------------------------------------------------------------------+
 #property copyright "Lovable"
-#property version   "0.130"
+#property version   "0.140"
 #property strict
 
 input string InpBaseUrl      = "https://session-whispers-flow.lovable.app";
@@ -27,6 +29,10 @@ input double InpMaxSpreadUsd = 0.60;                  // spread máximo aceptado
 input int    InpPollSeconds  = 5;                     // polling
 input int    InpMagic        = 202607;
 input bool   InpDiagnosticOnInit = true;              // Prueba conexión/token al iniciar, sin operar
+input bool   InpPushBars     = true;                  // Enviar velas del broker al dashboard
+input int    InpPushBarsSec  = 30;                    // Cada cuántos segundos enviar M1
+input int    InpBarsM1       = 400;                   // Velas M1 por envío
+input int    InpBarsHigherTf = 250;                   // Velas por TF superior
 
 #include <Trade\Trade.mqh>
 CTrade trade;
@@ -44,6 +50,8 @@ struct TradeRecord {
 
 TradeRecord g_trades[];
 datetime g_lastPoll = 0;
+datetime g_lastPushM1 = 0;
+datetime g_lastPushHtf = 0;
 int g_emptyPolls = 0;
 
 string WithToken(string url)
@@ -70,6 +78,7 @@ void OnDeinit(const int reason) { EventKillTimer(); }
 void OnTimer()
 {
    CheckClosedTrades();
+   PushBarsCycle();
    if(TimeCurrent() - g_lastPoll < InpPollSeconds) return;
    g_lastPoll = TimeCurrent();
    PollAndExecute();
@@ -327,4 +336,58 @@ void ReportError(string id, string msg)
    string body = StringFormat("{\"signal_id\":\"%s\",\"action\":\"error\",\"error_message\":\"%s\"}", id, msgEsc);
    HttpPostJson(url, body);
    Print("Signal ", id, " → ERROR: ", msg);
+}
+
+//+------------------------------------------------------------------+
+//|  Envío de velas del broker al dashboard (v0.14)                   |
+//|  El dashboard prefiere estos precios sobre el proveedor externo,   |
+//|  porque son los mismos que ejecuta tu cuenta (spread y sesión).    |
+//+------------------------------------------------------------------+
+void PushBarsCycle()
+{
+   if(!InpPushBars) return;
+   datetime now = TimeCurrent();
+
+   if(now - g_lastPushM1 >= MathMax(10, InpPushBarsSec))
+   {
+      g_lastPushM1 = now;
+      PushBars("M1", PERIOD_M1, InpBarsM1);
+   }
+
+   // TFs superiores: cada 5 minutos es más que suficiente.
+   if(now - g_lastPushHtf >= 300)
+   {
+      g_lastPushHtf = now;
+      PushBars("M15", PERIOD_M15, InpBarsHigherTf);
+      PushBars("H1",  PERIOD_H1,  InpBarsHigherTf);
+      PushBars("H4",  PERIOD_H4,  InpBarsHigherTf);
+      PushBars("D1",  PERIOD_D1,  120);
+   }
+}
+
+void PushBars(string tfName, ENUM_TIMEFRAMES period, int count)
+{
+   MqlRates rates[];
+   ArraySetAsSeries(rates, false);
+   int copied = CopyRates(InpSymbol, period, 0, count, rates);
+   if(copied <= 0) { PrintFormat("LovableBridge: CopyRates %s falló err=%d", tfName, GetLastError()); return; }
+
+   MqlTick tick; double spread = 0;
+   if(SymbolInfoTick(InpSymbol, tick)) spread = tick.ask - tick.bid;
+
+   string json = "{\"symbol\":\"" + InpSymbol + "\",\"tf\":\"" + tfName + "\"," +
+                 "\"broker\":\"" + AccountInfoString(ACCOUNT_COMPANY) + "\"," +
+                 StringFormat("\"spread\":%.3f,", spread) + "\"bars\":[";
+
+   for(int i = 0; i < copied; i++)
+   {
+      if(i > 0) json += ",";
+      json += StringFormat("[%I64d,%.3f,%.3f,%.3f,%.3f]",
+                           (long)rates[i].time, rates[i].open, rates[i].high, rates[i].low, rates[i].close);
+   }
+   json += "]}";
+
+   string url = InpBaseUrl + "/api/public/mt5-bars";
+   if(!HttpPostJson(url, json))
+      PrintFormat("LovableBridge: envío de velas %s falló", tfName);
 }
