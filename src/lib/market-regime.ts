@@ -106,6 +106,7 @@ export const ENGINE_REGIME_WHITELIST: Record<string, Regime[]> = {
   vwap_reversal: ["range", "low_vol"],
   gold_scalping: ["range", "trend_up", "trend_down"],
   straddle_breakout: ["high_vol"],
+  fibo_grid_cent: ["trend_up", "trend_down", "range"],
 };
 
 /** true si la estrategia normalmente rinde bien en ese régimen. */

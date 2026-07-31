@@ -11,6 +11,7 @@ const ENGINE_KEYS = [
   "gold_scalping",
   "ema_cross_m1",
   "straddle_breakout",
+  "fibo_grid_cent",
 ] as const;
 
 export const listMyStrategyParams = createServerFn({ method: "GET" })

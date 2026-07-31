@@ -295,7 +295,11 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
               ((u as { mt5_min_confidence?: string }).mt5_min_confidence === "medium" ||
                 signal.confidence === "high");
             const enabledEngines = (u as { mt5_enabled_engines?: string[] | null }).mt5_enabled_engines;
-            const engineAllowed = !enabledEngines || enabledEngines.length === 0 || enabledEngines.includes(key);
+            // Los motores con defaultEnabled === false (experimentales / alto
+            // riesgo, p.ej. E7 Fibo Grid Cent) exigen activación explícita.
+            const engineAllowed = strat.defaultEnabled === false
+              ? Boolean(enabledEngines?.includes(key))
+              : (!enabledEngines || enabledEngines.length === 0 || enabledEngines.includes(key));
             if (meetsMt5 && engineAllowed) {
               const { data: tok } = await supabaseAdmin
                 .from("mt5_ea_tokens")
