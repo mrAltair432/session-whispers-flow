@@ -25,7 +25,7 @@ import type { Signal } from "../signal-engine";
 export type FiboGridParams = {
   minScore?: number;
   fiboLevel?: number;        // nivel de entrada (0.618 por defecto)
-  maxOrders?: number;        // nº máximo de pendientes del grid
+  maxOrders?: number;        // nº máximo de pendientes del grid (original: ~100)
   gridStepAtr?: number;      // separación entre pendientes en múltiplos de ATR(M15)
   atrLowRisk?: number;       // ATR M15 (USD) a partir del cual reducimos grid
   atrHighRisk?: number;      // ATR M15 (USD) a partir del cual no abrimos
@@ -34,6 +34,11 @@ export type FiboGridParams = {
   expireMinutes?: number;    // caducidad de las pendientes
   dailyTargetR?: number;
   dailyLossLimitR?: number;
+  // --- Réplica 1:1 del comportamiento del EA original ---
+  slAtrMult?: number;        // SL "holgado" (equivale al SL_Percent=20 % de equity)
+  tpAtrMult?: number;        // TP corto (equivale al TP_Percent=5 % de equity)
+  longBias?: number;         // proporción buy/sell del grid (set: 60 buy / 20 sell = 3)
+  requireAo?: boolean;       // si false, el AO sólo puntúa (el EA no bloquea por AO)
 };
 
 function sma(vals: number[], p: number): number[] {
@@ -61,10 +66,10 @@ export function evaluateFiboGridCent(
   m15: Candle[],
   params: FiboGridParams = {},
 ): Signal {
-  const minScore = params.minScore ?? 62;
+  const minScore = params.minScore ?? 45;
   const fiboLevel = params.fiboLevel ?? 0.618;
-  const maxOrders = params.maxOrders ?? 8;
-  const gridStepAtr = params.gridStepAtr ?? 0.5;
+  const maxOrders = params.maxOrders ?? 100;
+  const gridStepAtr = params.gridStepAtr ?? 0.35;
   const atrLow = params.atrLowRisk ?? 2.5;
   const atrHigh = params.atrHighRisk ?? 4.5;
   const rsiLow = params.rsiLow ?? 35;
@@ -72,16 +77,20 @@ export function evaluateFiboGridCent(
   const expireMinutes = params.expireMinutes ?? 66;
   const dailyTargetR = params.dailyTargetR ?? 3;
   const dailyLossLimitR = params.dailyLossLimitR ?? 2;
+  const slAtrMult = params.slAtrMult ?? 8;
+  const tpAtrMult = params.tpAtrMult ?? 2;
+  const longBias = params.longBias ?? 3;
+  const requireAo = params.requireAo ?? false;
 
   if (h4.length < 50 || h1.length < 40 || m15.length < 60) return null;
 
   // ---- Sesgo: EMA20/EMA50 H4 + MA(15m) como el EA original ----
+  // El EA original opera 24 h y NO exige tendencia fuerte: sólo dirección.
   const h4Closes = h4.map((c) => c.close);
   const e20h4 = ema(h4Closes, 20);
   const e50h4 = ema(h4Closes, 50);
   const diffH4 = (e20h4[e20h4.length - 1] - e50h4[e50h4.length - 1]) / e50h4[e50h4.length - 1];
-  if (Math.abs(diffH4) < 0.0005) return null;
-  const bias: "long" | "short" = diffH4 > 0 ? "long" : "short";
+  const bias: "long" | "short" = diffH4 >= 0 ? "long" : "short";
 
   const closes15 = m15.map((c) => c.close);
   const ma15 = ema(closes15, 50);
@@ -103,11 +112,12 @@ export function evaluateFiboGridCent(
   const lvl786 = bias === "long" ? highPrice - range * 0.786 : lowPrice + range * 0.786;
   const lvl500 = bias === "long" ? highPrice - range * 0.5 : lowPrice + range * 0.5;
 
-  // Precio debe estar en la zona 0.5-0.786 (o haberla tocado en las últimas 6 M15)
+  // El EA re-mide el fibo constantemente y siembra pendientes por encima y por
+  // debajo (limit + stop), así que no exigimos estar dentro de la zona: la zona
+  // 0.5-0.786 sólo puntúa.
   const zoneTop = Math.max(lvl500, lvl786);
   const zoneBot = Math.min(lvl500, lvl786);
-  const inZone = m15.slice(-6).some((c) => c.low <= zoneTop && c.high >= zoneBot);
-  if (!inZone) return null;
+  const inZone = m15.slice(-12).some((c) => c.low <= zoneTop && c.high >= zoneBot);
 
   // ---- RSI 35/75 (misma lógica del EA: evita comprar en el pico) ----
   const r = rsi(m15, 14);
@@ -121,19 +131,20 @@ export function evaluateFiboGridCent(
   const aoVal = ao[ao.length - 1];
   const aoPrev = ao[ao.length - 2];
   const aoOk = bias === "long" ? aoVal > aoPrev : aoVal < aoPrev;
+  if (requireAo && !aoOk) return null;
 
   // ---- Régimen ATR (ATR_low/medium_risk del EA) ----
   const atr15 = atr(m15, 14);
   const atrVal = atr15[atr15.length - 1] || 1;
   if (atrVal >= atrHigh) return null;                 // volatilidad extrema → no abrimos
   const volFactor = atrVal >= atrLow ? 0.5 : 1;       // reduce el grid en vol media
-  const gridOrders = Math.max(2, Math.round(maxOrders * volFactor));
+  const gridOrders = Math.max(4, Math.round(maxOrders * volFactor));
 
   // ---- Score ----
   const breakdown = {
-    h4Trend: 20,
+    h4Trend: Math.abs(diffH4) >= 0.0005 ? 20 : 12,
     h1Sweep: 18,                       // slot: swing H1 válido
-    m15Fvg: 15,                        // slot: zona Fibo tocada
+    m15Fvg: inZone ? 15 : 6,           // slot: zona Fibo tocada
     m15Bos: maOk ? 12 : 4,
     killzone: 8,                       // el EA opera 24 h; sesgo horario suave
     atr: volFactor === 1 ? 10 : 6,
@@ -145,23 +156,37 @@ export function evaluateFiboGridCent(
     breakdown.killzone + breakdown.atr + breakdown.h1Alignment;
   if (breakdown.total < minScore) return null;
 
-  // ---- Entry / SL / TP ----
-  // Entrada base = nivel Fibo (el EA coloca pendientes; nosotros damos el
-  // primer nivel y el grid como metadata para el EA).
+  // ---- Entry / SL / TP (perfil del EA original) ----
+  // SL_Percent=20 % vs TP_Percent=5 % ⇒ stop MUY holgado y objetivo corto:
+  // muchas ganancias pequeñas, pérdidas raras y grandes. Aquí lo traducimos a
+  // múltiplos de ATR(M15) para que el precio "respire".
   const entry = last.close;
-  const buffer = Math.max(atrVal * 0.6, (last.high - last.low) * 0.5);
-  const sl = bias === "long" ? lvl786 - buffer : lvl786 + buffer;
-  const risk = Math.abs(entry - sl);
+  const slDist = atrVal * slAtrMult;
+  const tpDist = atrVal * tpAtrMult;
+  const sl = bias === "long" ? entry - slDist : entry + slDist;
+  const risk = slDist;
   if (risk <= 0) return null;
-  const tp1 = bias === "long" ? entry + risk : entry - risk;
-  const tp2 = bias === "long" ? entry + risk * 2 : entry - risk * 2;
-  const tp3 = bias === "long" ? entry + risk * 3 : entry - risk * 3;
+  const tp1 = bias === "long" ? entry + tpDist : entry - tpDist;
+  const tp2 = bias === "long" ? entry + tpDist * 1.5 : entry - tpDist * 1.5;
+  const tp3 = bias === "long" ? entry + tpDist * 2 : entry - tpDist * 2;
 
+  // ---- Grid: mezcla de limit (a favor del retroceso) y stop (a favor del
+  // impulso), sesgado al lado del bias igual que el .set original
+  // (30+30 buy vs 10+10 sell = 3:1). El EA los borra y recoloca cada minuto.
   const gridStep = atrVal * gridStepAtr;
-  const gridLevels: number[] = [];
-  for (let i = 1; i <= gridOrders - 1; i++) {
-    gridLevels.push(round(bias === "long" ? entry - gridStep * i : entry + gridStep * i));
+  const proBias = Math.max(2, Math.round((gridOrders * longBias) / (longBias + 1)));
+  const counterBias = Math.max(1, gridOrders - proBias);
+  const limits: number[] = [];
+  const stops: number[] = [];
+  for (let i = 1; i <= Math.ceil(proBias / 2); i++) {
+    limits.push(round(bias === "long" ? entry - gridStep * i : entry + gridStep * i));
+    stops.push(round(bias === "long" ? entry + gridStep * i : entry - gridStep * i));
   }
+  const counterLevels: number[] = [];
+  for (let i = 1; i <= Math.ceil(counterBias / 2); i++) {
+    counterLevels.push(round(bias === "long" ? entry + gridStep * i : entry - gridStep * i));
+  }
+  const gridLevels = limits;
 
   const confidence: "high" | "medium" = breakdown.total >= 80 && aoOk ? "high" : "medium";
 
@@ -180,20 +205,23 @@ export function evaluateFiboGridCent(
       h1Liquidity: `Swing H1 ${lowPrice.toFixed(2)} → ${highPrice.toFixed(2)} · Fibo ${(fiboLevel * 100).toFixed(1)}% ≈ ${lvlEntry.toFixed(2)}`,
       m15Confirmation: `RSI ${rVal.toFixed(1)} en banda ${rsiLow}/${rsiHigh}, AO ${aoOk ? "a favor" : "plano"}, MA15 ${maOk ? "ok" : "en contra"}`,
       notes: [
-        `Zona Fibo: ${zoneBot.toFixed(2)} - ${zoneTop.toFixed(2)}`,
+        `Zona Fibo 0.5-0.786: ${zoneBot.toFixed(2)} - ${zoneTop.toFixed(2)} ${inZone ? "(tocada)" : "(no tocada, sólo puntúa)"}`,
         `ATR M15: ${atrVal.toFixed(2)} USD (bajo<${atrLow} / alto>${atrHigh})`,
-        `Grid finito SIN martingala: ${gridOrders} niveles cada ${gridStep.toFixed(2)} USD (mismo lote)`,
-        `Niveles pendientes: ${gridLevels.map((g) => g.toFixed(2)).join(", ") || "—"}`,
-        `Pendientes caducan a ${expireMinutes} min · guardrails ±${dailyTargetR}R/-${dailyLossLimitR}R`,
-        `SL real por operación en 0.786 (${sl.toFixed(2)}) — el EA original sólo tenía SL global del 20 %`,
+        `SL holgado ${slAtrMult}×ATR = ${slDist.toFixed(2)} USD · TP corto ${tpAtrMult}×ATR = ${tpDist.toFixed(2)} USD (≈${(tpDist / slDist).toFixed(2)}R, perfil 20 %/5 % del EA)`,
+        `Grid ${gridOrders} niveles cada ${gridStep.toFixed(2)} USD, mismo lote (sin martingala) · sesgo ${longBias}:1 a favor`,
+        `Pendientes ${bias === "long" ? "BUY" : "SELL"} LIMIT: ${limits.map((g) => g.toFixed(2)).join(", ") || "—"}`,
+        `Pendientes ${bias === "long" ? "BUY" : "SELL"} STOP: ${stops.map((g) => g.toFixed(2)).join(", ") || "—"}`,
+        `Cobertura contraria: ${counterLevels.map((g) => g.toFixed(2)).join(", ") || "—"}`,
+        `Se recalculan y recolocan en cada barra · caducan a ${expireMinutes} min · guardrails ±${dailyTargetR}R/-${dailyLossLimitR}R`,
         `Score: ${breakdown.total}/100`,
       ],
     },
     management: {
-      breakEvenAtR: 0.8,
-      timeStopBars: 24,
-      trailAfterR: 1,
-      trailStepAtrMult: 0.5,
+      // Deja respirar: nada de BE agresivo ni time-stop corto.
+      breakEvenAtR: 0.35,
+      timeStopBars: 96,
+      trailAfterR: 0.2,
+      trailStepAtrMult: 1,
     },
   };
 }
