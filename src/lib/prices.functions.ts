@@ -93,7 +93,7 @@ export const fetchXauPrices = createServerFn({ method: "GET" }).handler(async ()
 // ejecuta tu cuenta MT5 (mismo spread, mismo horario de sesión).
 // ---------------------------------------------------------------------------
 
-export type MarketSource = "broker" | "twelvedata";
+export type MarketSource = "broker" | "hybrid" | "twelvedata";
 
 export type FetchMarketDataResult = FetchXauPricesResult & {
   source: MarketSource;
