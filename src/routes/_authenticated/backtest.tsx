@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2, Split } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
+  ComposedChart, Area, ReferenceLine,
 } from "recharts";
 
 export const Route = createFileRoute("/_authenticated/backtest")({
