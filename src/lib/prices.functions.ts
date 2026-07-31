@@ -189,6 +189,15 @@ export const fetchMarketData = createServerFn({ method: "GET" })
       counts.M5 = bars.M5.length;
     }
 
+    // M15 derivado de M1 si el EA no lo envía (necesita ~15h de M1 para 60 velas).
+    if ((bars.M15?.length ?? 0) < 60 && (bars.M1?.length ?? 0) >= 60) {
+      const derived = aggregateCandles(bars.M1 as Candle[], 15);
+      if (derived.length > (bars.M15?.length ?? 0)) {
+        bars.M15 = derived;
+        counts.M15 = derived.length;
+      }
+    }
+
     const m1 = bars.M1 ?? [];
     const lastBarTs = m1.length ? m1[m1.length - 1].time * 1000 : 0;
     const ageMin = lastBarTs ? (Date.now() - lastBarTs) / 60_000 : Infinity;
@@ -225,12 +234,42 @@ export const fetchMarketData = createServerFn({ method: "GET" })
       };
     }
 
+    const fallback = (await fetchXauPrices()) as FetchXauPricesResult;
+
+    // Modo híbrido: el EA manda velas frescas pero faltan TFs superiores.
+    // Usamos los precios reales del broker en los TFs disponibles y
+    // completamos los que faltan con Twelve Data.
+    if (fresh && (bars.M1?.length ?? 0) >= 120 && !fallback.error) {
+      const merged: BarsByTf = { ...(fallback.bars ?? {}) };
+      const missing: TfKey[] = [];
+      (["M1", "M5", "M15", "H1", "H4", "D1"] as TfKey[]).forEach((tf) => {
+        const own = bars[tf] ?? [];
+        const minNeeded = tf === "M1" ? 120 : 60;
+        if (own.length >= minNeeded) merged[tf] = own;
+        else missing.push(tf);
+      });
+      brokerMeta.reason = missing.length
+        ? `Mixto: broker en ${(["M1", "M5", "M15", "H1", "H4", "D1"] as TfKey[])
+            .filter((t) => !missing.includes(t))
+            .join("/")}, Twelve Data en ${missing.join("/")}`
+        : null;
+      return {
+        ...fallback,
+        bars: merged,
+        h4: merged.H4 ?? fallback.h4,
+        h1: merged.H1 ?? fallback.h1,
+        m15: merged.M15 ?? fallback.m15,
+        lastPrice: m1[m1.length - 1].close,
+        source: "hybrid",
+        broker: brokerMeta,
+      };
+    }
+
     brokerMeta.reason = !brokerMeta.available
       ? "El EA aún no ha enviado velas"
       : !hasCore
         ? "Historial del broker incompleto (faltan TFs)"
         : `Última vela del broker hace ${Math.round(ageMin)} min`;
 
-    const fallback = (await fetchXauPrices()) as FetchXauPricesResult;
     return { ...fallback, source: "twelvedata", broker: brokerMeta };
   });
