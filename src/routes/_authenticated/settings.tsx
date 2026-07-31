@@ -261,18 +261,21 @@ function SettingsPage() {
               <div className="space-y-2">
                 {listStrategies().map((s) => {
                   const enabled = form.mt5_enabled_engines === null
-                    ? true
+                    ? s.defaultEnabled !== false
                     : form.mt5_enabled_engines.includes(s.key);
                   return (
                     <div key={s.key} className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/40 px-3 py-2">
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{s.shortName}</p>
                         <p className="text-xs text-muted-foreground truncate">{s.name}</p>
+                        {s.riskNote && (
+                          <p className="text-xs text-destructive mt-0.5 truncate">{s.riskNote}</p>
+                        )}
                       </div>
                       <Switch
                         checked={enabled}
                         onCheckedChange={(v) => {
-                          const all = listStrategies().map((x) => x.key);
+                          const all = listStrategies().filter((x) => x.defaultEnabled !== false).map((x) => x.key);
                           const current = form.mt5_enabled_engines === null ? [...all] : [...form.mt5_enabled_engines];
                           const next = v
                             ? Array.from(new Set([...current, s.key]))
@@ -287,7 +290,7 @@ function SettingsPage() {
               <div className="flex gap-2 pt-1">
                 <Button type="button" variant="outline" size="sm"
                   onClick={() => setForm({ ...form, mt5_enabled_engines: null })}>
-                  Activar todas
+                  Activar todas (salvo alto riesgo)
                 </Button>
                 <Button type="button" variant="ghost" size="sm"
                   onClick={() => setForm({ ...form, mt5_enabled_engines: [] })}>
