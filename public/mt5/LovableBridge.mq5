@@ -1,9 +1,11 @@
 //+------------------------------------------------------------------+
-//|  LovableBridge.mq5  —  EA "puente tonto" v0.13                   |
+//|  LovableBridge.mq5  —  EA "puente tonto" v0.14                   |
 //|  Ejecuta las señales que publica el dashboard en la tabla        |
 //|  mt5_signals. NO decide nada por sí mismo.                       |
-//|  Ahora también reporta cierres reales (SL, TP, manual) para que    |
-//|  el dashboard calcule P&L y WinRate con datos reales de MT5.       |
+//|  Reporta cierres reales (SL, TP, manual) para que el dashboard    |
+//|  calcule P&L y WinRate con datos reales de MT5, y ADEMÁS envía    |
+//|  las velas del broker (M1..D1) para que el análisis del           |
+//|  dashboard use exactamente los precios de tu cuenta.              |
 //|                                                                  |
 //|  Instalación (una sola vez):                                     |
 //|   1) MT5 → File → Open Data Folder → MQL5/Experts/                |
@@ -16,7 +18,7 @@
 //|   4) En la pestaña "Inputs" pegar el token del EA.                |
 //+------------------------------------------------------------------+
 #property copyright "Lovable"
-#property version   "0.130"
+#property version   "0.140"
 #property strict
 
 input string InpBaseUrl      = "https://session-whispers-flow.lovable.app";
@@ -27,6 +29,10 @@ input double InpMaxSpreadUsd = 0.60;                  // spread máximo aceptado
 input int    InpPollSeconds  = 5;                     // polling
 input int    InpMagic        = 202607;
 input bool   InpDiagnosticOnInit = true;              // Prueba conexión/token al iniciar, sin operar
+input bool   InpPushBars     = true;                  // Enviar velas del broker al dashboard
+input int    InpPushBarsSec  = 30;                    // Cada cuántos segundos enviar M1
+input int    InpBarsM1       = 400;                   // Velas M1 por envío
+input int    InpBarsHigherTf = 250;                   // Velas por TF superior
 
 #include <Trade\Trade.mqh>
 CTrade trade;
@@ -44,6 +50,8 @@ struct TradeRecord {
 
 TradeRecord g_trades[];
 datetime g_lastPoll = 0;
+datetime g_lastPushM1 = 0;
+datetime g_lastPushHtf = 0;
 int g_emptyPolls = 0;
 
 string WithToken(string url)
@@ -70,6 +78,7 @@ void OnDeinit(const int reason) { EventKillTimer(); }
 void OnTimer()
 {
    CheckClosedTrades();
+   PushBarsCycle();
    if(TimeCurrent() - g_lastPoll < InpPollSeconds) return;
    g_lastPoll = TimeCurrent();
    PollAndExecute();
