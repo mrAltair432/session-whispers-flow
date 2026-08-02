@@ -42,6 +42,11 @@ function SettingsPage() {
     friday_cutoff_hour: 20,
     monday_open_hour: 2,
     weekend_flatten_enabled: true,
+    ftmo_mode_enabled: false,
+    ftmo_profit_target_pct: 10,
+    ftmo_daily_loss_pct: 5,
+    ftmo_max_loss_pct: 10,
+    ftmo_min_days: 4,
   });
 
   useEffect(() => {
@@ -62,6 +67,11 @@ function SettingsPage() {
       friday_cutoff_hour: (data as { friday_cutoff_hour?: number }).friday_cutoff_hour ?? 20,
       monday_open_hour: (data as { monday_open_hour?: number }).monday_open_hour ?? 2,
       weekend_flatten_enabled: (data as { weekend_flatten_enabled?: boolean }).weekend_flatten_enabled ?? true,
+      ftmo_mode_enabled: (data as { ftmo_mode_enabled?: boolean }).ftmo_mode_enabled ?? false,
+      ftmo_profit_target_pct: Number((data as { ftmo_profit_target_pct?: number }).ftmo_profit_target_pct ?? 10),
+      ftmo_daily_loss_pct: Number((data as { ftmo_daily_loss_pct?: number }).ftmo_daily_loss_pct ?? 5),
+      ftmo_max_loss_pct: Number((data as { ftmo_max_loss_pct?: number }).ftmo_max_loss_pct ?? 10),
+      ftmo_min_days: Number((data as { ftmo_min_days?: number }).ftmo_min_days ?? 4),
     });
   }, [data]);
 
@@ -462,6 +472,43 @@ function SettingsPage() {
         </form>
 
         <div className="mt-6 space-y-6">
+          <Section title="Modo FTMO (reto prop-firm)" subtitle="Aplica las reglas del reto en vivo: corta la operativa del día al acercarse al límite de pérdida diaria y fuerza el guardián de fin de semana. Guarda con el botón de arriba.">
+            <Field label="Activar modo FTMO" hint="Cuando la pérdida del día llega al 80% del límite diario, se dejan de generar señales hasta el día siguiente (UTC).">
+              <Switch
+                checked={form.ftmo_mode_enabled}
+                onCheckedChange={(v) => setForm({ ...form, ftmo_mode_enabled: v, weekend_guard_enabled: v ? true : form.weekend_guard_enabled })}
+              />
+            </Field>
+            <Field label="Objetivo de beneficio (%)" hint="Fase 1 de FTMO: 10%. Se usa en el simulador de reto del backtest.">
+              <Input
+                type="number" step="0.5" min={1} max={50}
+                value={form.ftmo_profit_target_pct}
+                onChange={(e) => setForm({ ...form, ftmo_profit_target_pct: parseFloat(e.target.value) || 10 })}
+              />
+            </Field>
+            <Field label="Pérdida diaria máxima (%)" hint="FTMO: 5% del balance inicial del día.">
+              <Input
+                type="number" step="0.5" min={0.5} max={20}
+                value={form.ftmo_daily_loss_pct}
+                onChange={(e) => setForm({ ...form, ftmo_daily_loss_pct: parseFloat(e.target.value) || 5 })}
+              />
+            </Field>
+            <Field label="Pérdida total máxima (%)" hint="FTMO: 10% del balance inicial del reto.">
+              <Input
+                type="number" step="0.5" min={1} max={50}
+                value={form.ftmo_max_loss_pct}
+                onChange={(e) => setForm({ ...form, ftmo_max_loss_pct: parseFloat(e.target.value) || 10 })}
+              />
+            </Field>
+            <Field label="Días mínimos de operativa" hint="FTMO exige al menos 4 días con operaciones.">
+              <Input
+                type="number" step="1" min={0} max={30}
+                value={form.ftmo_min_days}
+                onChange={(e) => setForm({ ...form, ftmo_min_days: parseInt(e.target.value) || 0 })}
+              />
+            </Field>
+          </Section>
+
           <Section title="Gestión de fin de semana (FTMO / prop-firm)" subtitle="Evita abrir operaciones cerca del cierre semanal y ordena al EA cerrar posiciones y cancelar pendientes antes del fin de semana.">
             <Field label="Activar guardián de fin de semana" hint="Bloquea señales el viernes desde la hora de corte, todo el sábado y domingo, y el lunes hasta la reapertura.">
               <Switch
