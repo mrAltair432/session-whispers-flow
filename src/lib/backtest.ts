@@ -192,9 +192,15 @@ export function simulateTrade(
   let bestPrice = entry; // MFE para trailing escalonado
   let maeR = 0;
   let mfeR = 0;
+  // Excursión flotante REAL: la posición no puede flotar más allá del stop
+  // vigente (se cierra ahí) ni más allá de TP3 (cierre total). Sin este
+  // recorte, una vela grande que atraviesa el SL inflaba el MAE a -10R o más
+  // y falseaba el simulador de reto FTMO.
   const track = (c: Candle) => {
-    const up = bias === "long" ? (c.high - entry) / initRisk : (entry - c.low) / initRisk;
-    const dn = bias === "long" ? (c.low - entry) / initRisk : (entry - c.high) / initRisk;
+    const worst = bias === "long" ? Math.max(c.low, sl) : Math.min(c.high, sl);
+    const best = bias === "long" ? Math.min(c.high, tp3) : Math.max(c.low, tp3);
+    const up = bias === "long" ? (best - entry) / initRisk : (entry - best) / initRisk;
+    const dn = bias === "long" ? (worst - entry) / initRisk : (entry - worst) / initRisk;
     if (up > mfeR) mfeR = up;
     if (dn < maeR) maeR = dn;
   };

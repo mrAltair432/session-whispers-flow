@@ -62,7 +62,17 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     requiredTfs: ["H4", "H1", "M15"],
     evaluate: (bars, params) =>
       smcGenerate(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], {
-        profile: "full", minScore: (params.minScore as number) ?? 70,
+        profile: "full",
+        minScore: (params.minScore as number) ?? 70,
+        requireKillzone: params.requireKillzone as boolean | undefined,
+        requireBos: params.requireBos as boolean | undefined,
+        requireH1Align: params.requireH1Align as boolean | undefined,
+        maxRiskAtrMult: params.maxRiskAtrMult as number | undefined,
+        minRiskAtrMult: params.minRiskAtrMult as number | undefined,
+        breakEvenAtR: params.breakEvenAtR as number | undefined,
+        timeStopBars: params.timeStopBars as number | undefined,
+        trailAfterR: params.trailAfterR as number | undefined,
+        trailStepAtrMult: params.trailStepAtrMult as number | undefined,
       }),
   },
   alligator_bb: {
