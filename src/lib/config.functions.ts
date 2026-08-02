@@ -31,6 +31,11 @@ const updateSchema = z.object({
   friday_cutoff_hour: z.number().int().min(0).max(23).optional(),
   monday_open_hour: z.number().int().min(0).max(23).optional(),
   weekend_flatten_enabled: z.boolean().optional(),
+  ftmo_mode_enabled: z.boolean().optional(),
+  ftmo_profit_target_pct: z.number().min(1).max(50).optional(),
+  ftmo_daily_loss_pct: z.number().min(0.5).max(20).optional(),
+  ftmo_max_loss_pct: z.number().min(1).max(50).optional(),
+  ftmo_min_days: z.number().int().min(0).max(30).optional(),
 });
 
 export const updateMyConfig = createServerFn({ method: "POST" })

@@ -22,6 +22,8 @@ import { useOptimizerPool, type OptRow } from "@/lib/use-optimizer-pool";
 import { useAiTrainer, loadModel, saveModel, deleteModel, isMlpModel, type AnyModel } from "@/lib/ai/use-trainer";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { simulateChallenge, suggestRiskPct, DEFAULT_FTMO_RULES, type ChallengeResult } from "@/lib/ftmo";
 import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2, Split } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
@@ -1078,6 +1080,8 @@ function BacktestPage() {
 
             {data.results.map((r) => <ProfileDetail key={r.engineKey} result={r} />)}
 
+            <ChallengePanel results={data.results} />
+
             {data.results
               .filter((r) => r.trades.length >= 40 && r.trades[0].features?.length)
               .map((r) => <AiPanel key={"ai-" + r.engineKey} result={r} />)}
@@ -1089,6 +1093,139 @@ function BacktestPage() {
 }
 
 function ProfileDetail({ result }: { result: BacktestResult }) {
+  return <ProfileDetailInner result={result} />;
+}
+
+// --- #5 Simulador de reto (FTMO) --------------------------------------
+function ChallengePanel({ results }: { results: BacktestResult[] }) {
+  const [balance, setBalance] = useState(DEFAULT_FTMO_RULES.balance);
+  const [riskPct, setRiskPct] = useState(DEFAULT_FTMO_RULES.riskPerTradePct);
+  const [target, setTarget] = useState(DEFAULT_FTMO_RULES.profitTargetPct);
+  const [dailyLoss, setDailyLoss] = useState(DEFAULT_FTMO_RULES.dailyLossPct);
+  const [maxLoss, setMaxLoss] = useState(DEFAULT_FTMO_RULES.maxLossPct);
+  const [minDays, setMinDays] = useState(DEFAULT_FTMO_RULES.minTradingDays);
+  const [dailyStop, setDailyStop] = useState(true);
+
+  const rules = {
+    balance, riskPerTradePct: riskPct, profitTargetPct: target,
+    dailyLossPct: dailyLoss, maxLossPct: maxLoss, minTradingDays: minDays,
+    enforceDailyStop: dailyStop,
+  };
+
+  const rows: Array<{ label: string; res: ChallengeResult }> = [];
+  const portfolioTrades = results.flatMap((r) => r.trades);
+  if (portfolioTrades.length) {
+    rows.push({ label: "Cartera (todas)", res: simulateChallenge(portfolioTrades, rules) });
+  }
+  for (const r of results) {
+    if (!r.trades.length) continue;
+    rows.push({ label: STRATEGIES[r.engineKey].shortName, res: simulateChallenge(r.trades, rules) });
+  }
+  if (!rows.length) return null;
+
+  const worstDd = Math.max(...results.map((r) => r.metrics.maxDrawdownR), 0);
+  const suggested = suggestRiskPct(worstDd, maxLoss);
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-5 space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="font-semibold">Simulador de reto (FTMO)</h3>
+          <p className="text-xs text-muted-foreground">
+            Convierte los R del backtest a USD con riesgo fijo por operación y aplica las
+            reglas del reto: objetivo, pérdida diaria y pérdida total (flotante incluido).
+          </p>
+        </div>
+        <Badge variant="outline">Riesgo sugerido: {suggested}% / trade</Badge>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <label className="text-xs space-y-1">
+          <span className="text-muted-foreground">Balance (USD)</span>
+          <Input type="number" value={balance} onChange={(e) => setBalance(parseFloat(e.target.value) || 0)} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-muted-foreground">Riesgo / trade (%)</span>
+          <Input type="number" step="0.05" value={riskPct} onChange={(e) => setRiskPct(parseFloat(e.target.value) || 0)} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-muted-foreground">Objetivo (%)</span>
+          <Input type="number" step="0.5" value={target} onChange={(e) => setTarget(parseFloat(e.target.value) || 0)} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-muted-foreground">Pérdida diaria (%)</span>
+          <Input type="number" step="0.5" value={dailyLoss} onChange={(e) => setDailyLoss(parseFloat(e.target.value) || 0)} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-muted-foreground">Pérdida total (%)</span>
+          <Input type="number" step="0.5" value={maxLoss} onChange={(e) => setMaxLoss(parseFloat(e.target.value) || 0)} />
+        </label>
+        <label className="text-xs space-y-1">
+          <span className="text-muted-foreground">Días mínimos</span>
+          <Input type="number" step="1" value={minDays} onChange={(e) => setMinDays(parseInt(e.target.value) || 0)} />
+        </label>
+      </div>
+
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <input type="checkbox" checked={dailyStop} onChange={(e) => setDailyStop(e.target.checked)} />
+        Aplicar stop diario (deja de operar al 80% del límite diario) — así opera el Modo FTMO en vivo
+      </label>
+
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full text-sm">
+          <thead className="bg-background/50 text-xs uppercase text-muted-foreground">
+            <tr>
+              <th className="text-left px-3 py-2">Estrategia</th>
+              <th className="text-left px-3 py-2">Resultado</th>
+              <th className="text-right px-3 py-2">Neto</th>
+              <th className="text-right px-3 py-2">Equity final</th>
+              <th className="text-right px-3 py-2">Peor día</th>
+              <th className="text-right px-3 py-2">Max DD</th>
+              <th className="text-right px-3 py-2">Días op.</th>
+              <th className="text-right px-3 py-2">Días al objetivo</th>
+              <th className="text-right px-3 py-2">Trades</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ label, res }) => (
+              <tr key={label} className="border-t border-border">
+                <td className="px-3 py-2 font-medium">{label}</td>
+                <td className="px-3 py-2">
+                  {res.status === "passed" && <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30">PASA fase 1</Badge>}
+                  {res.status === "failed" && <Badge className="bg-red-500/15 text-red-400 border-red-500/30">NO pasa</Badge>}
+                  {res.status === "in_progress" && <Badge variant="outline">Sin llegar al objetivo</Badge>}
+                  {res.failReason && <div className="text-[11px] text-red-400 mt-1">{res.failReason}</div>}
+                  {res.status === "in_progress" && res.tradingDays < minDays && (
+                    <div className="text-[11px] text-muted-foreground mt-1">Faltan días mínimos ({res.tradingDays}/{minDays})</div>
+                  )}
+                </td>
+                <td className={`text-right px-3 py-2 font-mono ${res.netPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {res.netPct >= 0 ? "+" : ""}{res.netPct.toFixed(2)}%
+                </td>
+                <td className="text-right px-3 py-2 font-mono">{res.finalEquity.toFixed(0)}</td>
+                <td className="text-right px-3 py-2 font-mono text-red-400">-{res.worstDailyDdPct.toFixed(2)}%</td>
+                <td className="text-right px-3 py-2 font-mono text-red-400">-{Math.max(0, res.maxDdPct).toFixed(2)}%</td>
+                <td className="text-right px-3 py-2 font-mono">{res.tradingDays}</td>
+                <td className="text-right px-3 py-2 font-mono">{res.daysToTarget ?? "—"}</td>
+                <td className="text-right px-3 py-2 font-mono">
+                  {res.tradesTaken}{res.tradesSkipped ? ` (+${res.tradesSkipped} omitidos)` : ""}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        El drawdown usa la peor excursión flotante (MAE) de cada operación, así que refleja el
+        criterio real de FTMO (equity, no balance). Baja el riesgo por operación hasta que
+        &quot;Max DD&quot; quede holgadamente por debajo del límite total.
+      </p>
+    </section>
+  );
+}
+
+function ProfileDetailInner({ result }: { result: BacktestResult }) {
   const m = result.metrics;
   return (
     <section className="rounded-lg border border-border bg-card p-5 space-y-4">

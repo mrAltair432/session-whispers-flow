@@ -563,6 +563,11 @@ export type Database = {
           econ_filter_enabled: boolean
           econ_filter_window_min: number
           friday_cutoff_hour: number
+          ftmo_daily_loss_pct: number
+          ftmo_max_loss_pct: number
+          ftmo_min_days: number
+          ftmo_mode_enabled: boolean
+          ftmo_profit_target_pct: number
           max_daily_loss_pct: number
           max_trades_per_day: number
           monday_open_hour: number
@@ -584,6 +589,11 @@ export type Database = {
           econ_filter_enabled?: boolean
           econ_filter_window_min?: number
           friday_cutoff_hour?: number
+          ftmo_daily_loss_pct?: number
+          ftmo_max_loss_pct?: number
+          ftmo_min_days?: number
+          ftmo_mode_enabled?: boolean
+          ftmo_profit_target_pct?: number
           max_daily_loss_pct?: number
           max_trades_per_day?: number
           monday_open_hour?: number
@@ -605,6 +615,11 @@ export type Database = {
           econ_filter_enabled?: boolean
           econ_filter_window_min?: number
           friday_cutoff_hour?: number
+          ftmo_daily_loss_pct?: number
+          ftmo_max_loss_pct?: number
+          ftmo_min_days?: number
+          ftmo_mode_enabled?: boolean
+          ftmo_profit_target_pct?: number
           max_daily_loss_pct?: number
           max_trades_per_day?: number
           monday_open_hour?: number
