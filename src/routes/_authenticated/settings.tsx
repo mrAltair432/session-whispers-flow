@@ -38,6 +38,10 @@ function SettingsPage() {
     mt5_enabled_engines: null as string[] | null,
     econ_filter_enabled: true,
     econ_filter_window_min: 30,
+    weekend_guard_enabled: true,
+    friday_cutoff_hour: 20,
+    monday_open_hour: 2,
+    weekend_flatten_enabled: true,
   });
 
   useEffect(() => {
@@ -54,6 +58,10 @@ function SettingsPage() {
       mt5_enabled_engines: (data as { mt5_enabled_engines?: string[] | null }).mt5_enabled_engines ?? null,
       econ_filter_enabled: (data as { econ_filter_enabled?: boolean }).econ_filter_enabled ?? true,
       econ_filter_window_min: (data as { econ_filter_window_min?: number }).econ_filter_window_min ?? 30,
+      weekend_guard_enabled: (data as { weekend_guard_enabled?: boolean }).weekend_guard_enabled ?? true,
+      friday_cutoff_hour: (data as { friday_cutoff_hour?: number }).friday_cutoff_hour ?? 20,
+      monday_open_hour: (data as { monday_open_hour?: number }).monday_open_hour ?? 2,
+      weekend_flatten_enabled: (data as { weekend_flatten_enabled?: boolean }).weekend_flatten_enabled ?? true,
     });
   }, [data]);
 
@@ -454,6 +462,43 @@ function SettingsPage() {
         </form>
 
         <div className="mt-6 space-y-6">
+          <Section title="Gestión de fin de semana (FTMO / prop-firm)" subtitle="Evita abrir operaciones cerca del cierre semanal y ordena al EA cerrar posiciones y cancelar pendientes antes del fin de semana.">
+            <Field label="Activar guardián de fin de semana" hint="Bloquea señales el viernes desde la hora de corte, todo el sábado y domingo, y el lunes hasta la reapertura.">
+              <Switch
+                checked={form.weekend_guard_enabled}
+                onCheckedChange={(v) => setForm({ ...form, weekend_guard_enabled: v })}
+              />
+            </Field>
+            <Field label="Corte del viernes (UTC)" hint="A partir de esta hora no se generan señales nuevas.">
+              <select
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={form.friday_cutoff_hour}
+                onChange={(e) => setForm({ ...form, friday_cutoff_hour: parseInt(e.target.value) })}
+              >
+                {[16, 17, 18, 19, 20, 21].map((h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Reapertura del lunes (UTC)" hint="Horas de espera tras el gap de apertura antes de volver a operar.">
+              <select
+                className="w-full h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={form.monday_open_hour}
+                onChange={(e) => setForm({ ...form, monday_open_hour: parseInt(e.target.value) })}
+              >
+                {[0, 1, 2, 3, 4].map((h) => (
+                  <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Cerrar todo antes del fin de semana" hint="El EA (v0.16+) cierra posiciones abiertas y cancela pendientes al llegar el corte del viernes.">
+              <Switch
+                checked={form.weekend_flatten_enabled}
+                onCheckedChange={(v) => setForm({ ...form, weekend_flatten_enabled: v })}
+              />
+            </Field>
+          </Section>
+
           <Section title="Filtro económico (macro)" subtitle="Bloquea automáticamente el envío de señales alrededor de eventos de alto impacto USD (FOMC, NFP, CPI, etc.). Fuente: feed gratuito ForexFactory + fallback interno.">
             <Field label="Activar filtro" hint="Cuando está activo, las señales generadas dentro de la ventana no se envían al EA ni a Telegram.">
               <Switch
