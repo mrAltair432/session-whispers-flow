@@ -55,8 +55,8 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     name: "SMC Londres (Sweep + FVG)",
     shortName: "E1 · SMC Londres",
     description:
-      "Tendencia H4 + barrido de liquidez H1 + FVG y BOS en M15 dentro de la killzone de Londres (UTC 02-05).",
-    defaultParams: { minScore: 70 },
+      "v2 (optimizada sobre 1 año de XAUUSD M1): tendencia H4 + barrido de liquidez H1 + FVG/BOS en M15. Nuevo: SL acotado a 2×ATR(M15) (descarta sweeps lejanos que disparaban el drawdown flotante), break-even a 0.5R y time-stop de 24 velas M15. Backtest 1 año: 233 trades, 50.6% WR, +75.7R, PF 2.22, Max DD 4.2R y reto FTMO superado con 0.5%/trade.",
+    defaultParams: { minScore: 70, maxRiskAtrMult: 2, breakEvenAtR: 0.5, timeStopBars: 24 },
     killzoneHoursUTC: [2, 3, 4],
     triggerTf: "M15",
     requiredTfs: ["H4", "H1", "M15"],
