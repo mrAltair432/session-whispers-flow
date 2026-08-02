@@ -7,6 +7,7 @@ import { fetchUpcomingEvents, findBlockingEvent } from "@/lib/economic-calendar"
 import { detectRegime, isRegimeFriendly } from "@/lib/market-regime";
 import { predictProb, scorerVerdict, type ScorerModel } from "@/lib/ml-scorer";
 import { readWeekendGuard, isWeekendWindow } from "@/lib/weekend-guard";
+import { readFtmoConfig, ftmoDailyBlock } from "@/lib/ftmo";
 
 // Server-side cron: evalúa E1/E2/E3 sin necesidad de que el usuario tenga el
 // dashboard abierto. Se llama cada 15 min desde pg_cron durante horario de
@@ -121,7 +122,7 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
         // Usuarios con telegram habilitado
         const { data: users, error: usersErr } = await supabaseAdmin
           .from("user_config")
-          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, mt5_enabled_engines, balance, risk_per_trade, econ_filter_enabled, econ_filter_window_min, weekend_guard_enabled, friday_cutoff_hour, monday_open_hour, weekend_flatten_enabled")
+          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, mt5_enabled_engines, balance, risk_per_trade, econ_filter_enabled, econ_filter_window_min, weekend_guard_enabled, friday_cutoff_hour, monday_open_hour, weekend_flatten_enabled, ftmo_mode_enabled, ftmo_daily_loss_pct, ftmo_max_loss_pct")
           .eq("telegram_enabled", true)
           .not("telegram_chat_id", "is", null);
         if (usersErr) return Response.json({ error: usersErr.message }, { status: 500 });
@@ -161,6 +162,23 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
 
         // --- #3 Régimen actual (H1) — común a todos los usuarios
         const regimeInfo = bars.H1 && bars.H1.length >= 60 ? detectRegime(bars.H1) : null;
+
+        // --- #1 Modo FTMO: pérdida del día por usuario (bloqueo intradía).
+        // Se lee una sola vez por ejecución y se reutiliza para todos los motores.
+        const todayKey = now.toISOString().slice(0, 10);
+        const lossToday = new Map<string, number>();
+        if (userIds.length) {
+          const { data: ds } = await supabaseAdmin
+            .from("daily_stats")
+            .select("user_id, loss_usd, pnl_usd")
+            .eq("trade_date", todayKey)
+            .in("user_id", userIds);
+          for (const row of ds ?? []) {
+            const pnl = Number(row.pnl_usd ?? 0);
+            const loss = Number(row.loss_usd ?? 0);
+            lossToday.set(row.user_id, Math.max(Math.abs(loss), pnl < 0 ? Math.abs(pnl) : 0));
+          }
+        }
 
         // Features base para el ML re-scoring (ampliables por estrategia)
         function buildFeatures(sig: NonNullable<Signal>): Record<string, number> {
@@ -217,6 +235,11 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
             // --- Gestión de fin de semana (reglas prop-firm tipo FTMO)
             const wg = readWeekendGuard(u as unknown as Record<string, unknown>);
             if (isWeekendWindow(now, wg)) continue;
+
+            // --- #1 Modo FTMO: corta la operativa del día al acercarse al
+            // límite de pérdida diaria del reto (buffer 80 %).
+            const ftmo = readFtmoConfig(u as unknown as Record<string, unknown>);
+            if (ftmoDailyBlock(ftmo, lossToday.get(u.user_id) ?? 0)) continue;
 
             // --- #6 Filtro económico por usuario (respeta su configuración)
             const econEnabled = (u as { econ_filter_enabled?: boolean }).econ_filter_enabled ?? true;
