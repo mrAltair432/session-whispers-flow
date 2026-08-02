@@ -54,6 +54,16 @@ export type Signal = {
 export type EngineOptions = {
   profile?: SignalProfile;   // controls which filters apply
   minScore?: number;         // default 70
+  // Filtros de calidad opcionales (optimización E1 sobre 1 año de XAUUSD M1)
+  requireKillzone?: boolean; // solo operar dentro de killzone
+  requireBos?: boolean;      // exigir BOS en M15
+  requireH1Align?: boolean;  // exigir EMA20/50 H1 alineadas con el bias
+  maxRiskAtrMult?: number;   // descarta setups con SL > N x ATR(M15)
+  minRiskAtrMult?: number;   // descarta SL microscópicos (ruido/spread)
+  breakEvenAtR?: number;
+  timeStopBars?: number;
+  trailAfterR?: number;
+  trailStepAtrMult?: number;
 };
 
 export function generateSignal(
@@ -110,9 +120,11 @@ export function generateSignal(
       : lastM15.close < lastM15.open && lastM15.close < lastEma15;
   if (!m15Confirm) return null;
   const bosOk = detectBOS(m15, bias, 20);
+  if (opts.requireBos && !bosOk) return null;
 
   // ---- Step 5: filters (killzone + ATR regime) ----
   const kz = getKillzone(lastM15.time);
+  if (opts.requireKillzone && !kz) return null;
   const atrSeries = atr(m15, 14);
   const lastAtr = atrSeries[atrSeries.length - 1];
   // ATR baseline = median of the last 80 non-zero ATR values
@@ -132,6 +144,7 @@ export function generateSignal(
         ? e1h_20[e1h_20.length - 1] > e1h_50[e1h_50.length - 1]
         : e1h_20[e1h_20.length - 1] < e1h_50[e1h_50.length - 1];
   }
+  if (opts.requireH1Align && !h1Aligned) return null;
 
   // ---- Scoring ----
   const breakdown: ScoreBreakdown = {
@@ -160,6 +173,10 @@ export function generateSignal(
   const stopLoss = bias === "long" ? slAnchor - buffer : slAnchor + buffer;
   const risk = Math.abs(entry - stopLoss);
   if (risk <= 0) return null;
+  if (lastAtr > 0) {
+    if (opts.maxRiskAtrMult && risk > opts.maxRiskAtrMult * lastAtr) return null;
+    if (opts.minRiskAtrMult && risk < opts.minRiskAtrMult * lastAtr) return null;
+  }
   const tp1 = bias === "long" ? entry + risk : entry - risk;
   const tp2 = bias === "long" ? entry + risk * 2 : entry - risk * 2;
   const tp3 = bias === "long" ? entry + risk * 3 : entry - risk * 3;
@@ -192,6 +209,12 @@ export function generateSignal(
         `H1 EMAs ${h1Aligned ? "alineadas" : "no alineadas"} con el bias`,
         `Score: ${breakdown.total}/100`,
       ],
+    },
+    management: {
+      ...(opts.breakEvenAtR ? { breakEvenAtR: opts.breakEvenAtR } : {}),
+      ...(opts.timeStopBars ? { timeStopBars: opts.timeStopBars } : {}),
+      ...(opts.trailAfterR ? { trailAfterR: opts.trailAfterR } : {}),
+      ...(opts.trailStepAtrMult ? { trailStepAtrMult: opts.trailStepAtrMult } : {}),
     },
   };
 }
