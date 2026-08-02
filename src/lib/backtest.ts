@@ -222,31 +222,7 @@ export function simulateTrade(
     if (!tp1Hit && timeStopBars && (i - entryIdx) >= timeStopBars) {
       return closeRemaining(c.open, c.time, "timeout");
     }
-    // Break-even a N*R (I): mueve SL a entry cuando el MFE alcanza N*R.
-    if (!tp1Hit && !beMoved && beAtR && beAtR > 0) {
-      const trigger = bias === "long" ? entry + beAtR * initRisk : entry - beAtR * initRisk;
-      const reached = bias === "long" ? c.high >= trigger : c.low <= trigger;
-      if (reached) {
-        sl = entry;
-        beMoved = true;
-      }
-    }
     if (bias === "long") {
-      // Trailing escalonado (post-Fibonacci EA idea): tras alcanzar
-      // trailAfterR·R, arrastramos SL en pasos discretos de step·ATR bajo
-      // el MFE. Nunca movemos SL en contra.
-      if (trailingOn) {
-        bestPrice = Math.max(bestPrice, c.high);
-        const mfeR = (bestPrice - entry) / initRisk;
-        if (mfeR >= (trailAfterR as number)) {
-          const step = (atrArr as number[])[i] * (trailStepMult as number);
-          if (step > 0) {
-            const trail = Math.floor((bestPrice - entry) / step) * step;
-            const candidate = entry + trail - step;
-            if (candidate > sl) sl = candidate;
-          }
-        }
-      }
       // Check SL first (conservative)
       if (c.low <= sl) {
         if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
@@ -274,18 +250,6 @@ export function simulateTrade(
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
       }
     } else {
-      if (trailingOn) {
-        bestPrice = Math.min(bestPrice, c.low);
-        const mfeR = (entry - bestPrice) / initRisk;
-        if (mfeR >= (trailAfterR as number)) {
-          const step = (atrArr as number[])[i] * (trailStepMult as number);
-          if (step > 0) {
-            const trail = Math.floor((entry - bestPrice) / step) * step;
-            const candidate = entry - trail + step;
-            if (candidate < sl) sl = candidate;
-          }
-        }
-      }
       if (c.high >= sl) {
         if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
@@ -309,6 +273,36 @@ export function simulateTrade(
         realizedR -= 0.2 * costR;
         remaining = 0;
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
+      }
+    }
+
+    // --- Actualización de stop DESPUÉS de evaluar la barra ---------------
+    // Break-even y trailing se aplican al cierre de la vela y solo rigen a
+    // partir de la SIGUIENTE. Aplicarlos antes de comprobar SL/TP dentro de
+    // la misma vela era optimista (asumía que el stop ya estaba movido
+    // cuando el precio volvía) e inflaba artificialmente el resultado.
+    if (!tp1Hit && !beMoved && beAtR && beAtR > 0) {
+      const trigger = bias === "long" ? entry + beAtR * initRisk : entry - beAtR * initRisk;
+      const reached = bias === "long" ? c.high >= trigger : c.low <= trigger;
+      if (reached) {
+        sl = entry;
+        beMoved = true;
+      }
+    }
+    if (trailingOn) {
+      bestPrice = bias === "long" ? Math.max(bestPrice, c.high) : Math.min(bestPrice, c.low);
+      const runR = bias === "long" ? (bestPrice - entry) / initRisk : (entry - bestPrice) / initRisk;
+      if (runR >= (trailAfterR as number)) {
+        const step = (atrArr as number[])[i] * (trailStepMult as number);
+        if (step > 0) {
+          if (bias === "long") {
+            const candidate = entry + Math.floor((bestPrice - entry) / step) * step - step;
+            if (candidate > sl) sl = candidate;
+          } else {
+            const candidate = entry - Math.floor((entry - bestPrice) / step) * step + step;
+            if (candidate < sl) sl = candidate;
+          }
+        }
       }
     }
   }
