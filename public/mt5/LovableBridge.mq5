@@ -172,6 +172,7 @@ void DiagnosticPing()
 void PollAndExecute()
 {
    int status = 0;
+
    string url = InpBaseUrl + "/api/public/mt5-signals";
    string body = HttpGet(url, status);
    if(status == 401) { Print("LovableBridge: token inválido o no coincide con el dashboard. Genera uno nuevo, pégalo completo y reinicia el EA. Respuesta=", body); return; }
