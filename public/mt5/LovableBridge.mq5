@@ -169,10 +169,32 @@ void DiagnosticPing()
 }
 
 //---
+// Cierra todas las posiciones del EA y cancela las órdenes pendientes.
+void FlattenAll(string reason)
+{
+   int closed = 0, deleted = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol) continue;
+      if(trade.PositionClose(ticket)) closed++;
+   }
+   for(int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != InpMagic) continue;
+      if(OrderGetString(ORDER_SYMBOL) != InpSymbol) continue;
+      if(trade.OrderDelete(ticket)) deleted++;
+   }
+   if(closed > 0 || deleted > 0)
+      PrintFormat("LovableBridge FlattenAll (%s): %d posiciones cerradas, %d pendientes canceladas", reason, closed, deleted);
+}
+
 void PollAndExecute()
 {
    int status = 0;
-
    string url = InpBaseUrl + "/api/public/mt5-signals";
    string body = HttpGet(url, status);
    if(status == 401) { Print("LovableBridge: token inválido o no coincide con el dashboard. Genera uno nuevo, pégalo completo y reinicia el EA. Respuesta=", body); return; }
