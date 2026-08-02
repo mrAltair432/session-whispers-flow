@@ -68,7 +68,7 @@ int OnInit()
    if(StringLen(InpEaToken) < 8)
    { Alert("LovableBridge: token EA vacío. Pega el token en inputs."); return(INIT_FAILED); }
    EventSetTimer(MathMax(1, InpPollSeconds));
-   Print("LovableBridge v0.13 iniciado. BaseUrl=", InpBaseUrl, " Symbol=", InpSymbol, " Poll=", InpPollSeconds, "s");
+   Print("LovableBridge v0.16 iniciado. BaseUrl=", InpBaseUrl, " Symbol=", InpSymbol, " Poll=", InpPollSeconds, "s");
    if(InpDiagnosticOnInit) DiagnosticPing();
    PollAndExecute();
    return(INIT_SUCCEEDED);
@@ -169,6 +169,29 @@ void DiagnosticPing()
 }
 
 //---
+// Cierra todas las posiciones del EA y cancela las órdenes pendientes.
+void FlattenAll(string reason)
+{
+   int closed = 0, deleted = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--) {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+      if(PositionGetString(POSITION_SYMBOL) != InpSymbol) continue;
+      if(trade.PositionClose(ticket)) closed++;
+   }
+   for(int i = OrdersTotal() - 1; i >= 0; i--) {
+      ulong ticket = OrderGetTicket(i);
+      if(ticket == 0) continue;
+      if(OrderGetInteger(ORDER_MAGIC) != InpMagic) continue;
+      if(OrderGetString(ORDER_SYMBOL) != InpSymbol) continue;
+      if(trade.OrderDelete(ticket)) deleted++;
+   }
+   if(closed > 0 || deleted > 0)
+      PrintFormat("LovableBridge FlattenAll (%s): %d posiciones cerradas, %d pendientes canceladas", reason, closed, deleted);
+}
+
 void PollAndExecute()
 {
    int status = 0;
@@ -176,6 +199,20 @@ void PollAndExecute()
    string body = HttpGet(url, status);
    if(status == 401) { Print("LovableBridge: token inválido o no coincide con el dashboard. Genera uno nuevo, pégalo completo y reinicia el EA. Respuesta=", body); return; }
    if(status < 200 || status >= 300) { PrintFormat("LovableBridge GET HTTP %d resp=%s", status, body); return; }
+
+   // --- Gestión de fin de semana: el backend ordena aplanar la cuenta.
+   if(StringFind(body, "\"flatten\":true") >= 0) {
+      FlattenAll("weekend-guard");
+   }
+   if(StringFind(body, "\"weekend_blocked\":true") >= 0) {
+      static datetime lastWeekendLog = 0;
+      if(TimeCurrent() - lastWeekendLog > 3600) {
+         lastWeekendLog = TimeCurrent();
+         Print("LovableBridge: ventana de fin de semana activa (", JsonStr(body, "weekend_reason"), "). Sin entradas nuevas.");
+      }
+      return;
+   }
+
    if(body == "" || StringFind(body, "\"signal\":null") >= 0) {
       g_emptyPolls++;
       if(g_emptyPolls == 1 || MathMod(g_emptyPolls, 12) == 0) {

@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { readWeekendGuard, isWeekendWindow, shouldFlatten, weekendGuardReason } from "@/lib/weekend-guard";
 
 // Endpoint puente entre el dashboard/EA y MT5.
 // Autenticación por token del EA (tabla public.mt5_ea_tokens), enviado en
@@ -37,6 +38,17 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
           .eq("token", token);
 
         const nowIso = new Date().toISOString();
+        const nowDate = new Date();
+
+        // Config de fin de semana del usuario (reglas prop-firm tipo FTMO)
+        const { data: cfgRow } = await supabaseAdmin
+          .from("user_config")
+          .select("weekend_guard_enabled, friday_cutoff_hour, monday_open_hour, weekend_flatten_enabled")
+          .eq("user_id", tok.user_id)
+          .maybeSingle();
+        const wg = readWeekendGuard(cfgRow as unknown as Record<string, unknown> | null);
+        const flatten = shouldFlatten(nowDate, wg);
+        const weekendBlocked = isWeekendWindow(nowDate, wg);
 
         if (diagnosticOnly) {
           const { count: pendingCount } = await supabaseAdmin
@@ -59,8 +71,27 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
             mode: "diagnostic",
             token: "valid",
             server_time: nowIso,
+            flatten,
+            weekend_blocked: weekendBlocked,
+            weekend_reason: weekendGuardReason(nowDate, wg),
             pending_count: pendingCount ?? 0,
             latest_signal: latest ?? null,
+          });
+        }
+
+        // Ventana de fin de semana: no se entregan señales nuevas y, si
+        // procede, se ordena al EA aplanar la cuenta (cerrar todo).
+        if (weekendBlocked) {
+          await supabaseAdmin
+            .from("mt5_signals")
+            .update({ status: "cancelled", error_message: "weekend-guard" })
+            .eq("user_id", tok.user_id)
+            .eq("status", "pending");
+          return json({
+            signal: null,
+            flatten,
+            weekend_blocked: true,
+            weekend_reason: weekendGuardReason(nowDate, wg),
           });
         }
 
@@ -83,7 +114,7 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
           .limit(1)
           .maybeSingle();
 
-        if (!sig) return json({ signal: null });
+        if (!sig) return json({ signal: null, flatten: false, weekend_blocked: false });
 
         // 3. Marcarla como enviada al EA
         await supabaseAdmin
@@ -91,7 +122,7 @@ export const Route = createFileRoute("/api/public/mt5-signals")({
           .update({ status: "sent" })
           .eq("id", sig.id);
 
-        return json({ signal: sig });
+        return json({ signal: sig, flatten: false, weekend_blocked: false });
       },
 
       POST: async ({ request }) => {

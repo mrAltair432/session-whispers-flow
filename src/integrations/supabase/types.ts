@@ -562,8 +562,10 @@ export type Database = {
           created_at: string
           econ_filter_enabled: boolean
           econ_filter_window_min: number
+          friday_cutoff_hour: number
           max_daily_loss_pct: number
           max_trades_per_day: number
+          monday_open_hour: number
           mt5_auto_route_enabled: boolean
           mt5_enabled_engines: string[] | null
           mt5_min_confidence: string
@@ -572,6 +574,8 @@ export type Database = {
           telegram_enabled: boolean
           updated_at: string
           user_id: string
+          weekend_flatten_enabled: boolean
+          weekend_guard_enabled: boolean
         }
         Insert: {
           auto_alert_high_confidence?: boolean
@@ -579,8 +583,10 @@ export type Database = {
           created_at?: string
           econ_filter_enabled?: boolean
           econ_filter_window_min?: number
+          friday_cutoff_hour?: number
           max_daily_loss_pct?: number
           max_trades_per_day?: number
+          monday_open_hour?: number
           mt5_auto_route_enabled?: boolean
           mt5_enabled_engines?: string[] | null
           mt5_min_confidence?: string
@@ -589,6 +595,8 @@ export type Database = {
           telegram_enabled?: boolean
           updated_at?: string
           user_id: string
+          weekend_flatten_enabled?: boolean
+          weekend_guard_enabled?: boolean
         }
         Update: {
           auto_alert_high_confidence?: boolean
@@ -596,8 +604,10 @@ export type Database = {
           created_at?: string
           econ_filter_enabled?: boolean
           econ_filter_window_min?: number
+          friday_cutoff_hour?: number
           max_daily_loss_pct?: number
           max_trades_per_day?: number
+          monday_open_hour?: number
           mt5_auto_route_enabled?: boolean
           mt5_enabled_engines?: string[] | null
           mt5_min_confidence?: string
@@ -606,6 +616,8 @@ export type Database = {
           telegram_enabled?: boolean
           updated_at?: string
           user_id?: string
+          weekend_flatten_enabled?: boolean
+          weekend_guard_enabled?: boolean
         }
         Relationships: []
       }

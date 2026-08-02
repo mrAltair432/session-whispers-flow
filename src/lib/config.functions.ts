@@ -27,6 +27,10 @@ const updateSchema = z.object({
   mt5_enabled_engines: z.array(z.string()).nullable().optional(),
   econ_filter_enabled: z.boolean().optional(),
   econ_filter_window_min: z.number().int().min(0).max(180).optional(),
+  weekend_guard_enabled: z.boolean().optional(),
+  friday_cutoff_hour: z.number().int().min(0).max(23).optional(),
+  monday_open_hour: z.number().int().min(0).max(23).optional(),
+  weekend_flatten_enabled: z.boolean().optional(),
 });
 
 export const updateMyConfig = createServerFn({ method: "POST" })

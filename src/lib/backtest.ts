@@ -134,7 +134,7 @@ function isMarketClosedOrRisky(d: Date): boolean {
   const h = d.getUTCHours();
   if (wd === 6) return true;             // sábado
   if (wd === 0 && h < 22) return true;   // domingo antes de la apertura
-  if (wd === 5 && h >= 21) return true;  // viernes cierre
+  if (wd === 5 && h >= 20) return true;  // viernes cierre (corte prop-firm)
   if (wd === 1 && h < 2) return true;    // gap lunes
   if (wd >= 1 && wd <= 4 && h === 22) return true; // pausa diaria L-J
   return false;
