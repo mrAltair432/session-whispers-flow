@@ -120,7 +120,7 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
         // Usuarios con telegram habilitado
         const { data: users, error: usersErr } = await supabaseAdmin
           .from("user_config")
-          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, mt5_enabled_engines, balance, risk_per_trade, econ_filter_enabled, econ_filter_window_min")
+          .select("user_id, telegram_chat_id, telegram_enabled, auto_alert_high_confidence, mt5_auto_route_enabled, mt5_min_confidence, mt5_enabled_engines, balance, risk_per_trade, econ_filter_enabled, econ_filter_window_min, weekend_guard_enabled, friday_cutoff_hour, monday_open_hour, weekend_flatten_enabled")
           .eq("telegram_enabled", true)
           .not("telegram_chat_id", "is", null);
         if (usersErr) return Response.json({ error: usersErr.message }, { status: 500 });
@@ -213,6 +213,10 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
           let signalsCount = 0;
           let sent = 0;
           for (const u of users ?? []) {
+            // --- Gestión de fin de semana (reglas prop-firm tipo FTMO)
+            const wg = readWeekendGuard(u as unknown as Record<string, unknown>);
+            if (isWeekendWindow(now, wg)) continue;
+
             // --- #6 Filtro económico por usuario (respeta su configuración)
             const econEnabled = (u as { econ_filter_enabled?: boolean }).econ_filter_enabled ?? true;
             const econWindow = (u as { econ_filter_window_min?: number }).econ_filter_window_min ?? 30;
