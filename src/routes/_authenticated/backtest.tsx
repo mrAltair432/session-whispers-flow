@@ -23,7 +23,14 @@ import { useAiTrainer, loadModel, saveModel, deleteModel, isMlpModel, type AnyMo
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { simulateChallenge, suggestRiskPct, DEFAULT_FTMO_RULES, type ChallengeResult } from "@/lib/ftmo";
+import {
+  simulateChallenge,
+  suggestRiskPct,
+  simulateRollingChallenges,
+  optimizeRiskForWindow,
+  DEFAULT_FTMO_RULES,
+  type ChallengeResult,
+} from "@/lib/ftmo";
 import { ArrowLeft, Play, Loader2, Upload, Wand2, X, Download, Save, RotateCcw, Brain, Trash2, Split } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, Bar,
@@ -1105,6 +1112,7 @@ function ChallengePanel({ results }: { results: BacktestResult[] }) {
   const [maxLoss, setMaxLoss] = useState(DEFAULT_FTMO_RULES.maxLossPct);
   const [minDays, setMinDays] = useState(DEFAULT_FTMO_RULES.minTradingDays);
   const [dailyStop, setDailyStop] = useState(true);
+  const [windowDays, setWindowDays] = useState(28);
 
   const rules = {
     balance, riskPerTradePct: riskPct, profitTargetPct: target,
@@ -1125,6 +1133,28 @@ function ChallengePanel({ results }: { results: BacktestResult[] }) {
 
   const worstDd = Math.max(...results.map((r) => r.metrics.maxDrawdownR), 0);
   const suggested = suggestRiskPct(worstDd, maxLoss);
+
+  // Ventanas rodantes: ¿se logra el reto dentro de 2-4 semanas?
+  const rollingRows = rows.map(({ label }, i) => ({
+    label,
+    summary: simulateRollingChallenges(
+      i === 0 && portfolioTrades.length ? portfolioTrades : results.find((r) => STRATEGIES[r.engineKey].shortName === label)?.trades ?? [],
+      rules,
+      windowDays,
+      1,
+    ),
+  }));
+  const riskSweep = portfolioTrades.length
+    ? optimizeRiskForWindow(portfolioTrades, rules, windowDays)
+    : [];
+  const bestRisk = riskSweep.length
+    ? [...riskSweep].sort(
+        (a, b) =>
+          b.summary.passRate - a.summary.passRate ||
+          a.summary.failRate - b.summary.failRate ||
+          a.riskPct - b.riskPct,
+      )[0]!
+    : null;
 
   return (
     <section className="rounded-lg border border-border bg-card p-5 space-y-4">
@@ -1221,6 +1251,136 @@ function ChallengePanel({ results }: { results: BacktestResult[] }) {
         criterio real de FTMO (equity, no balance). Baja el riesgo por operación hasta que
         &quot;Max DD&quot; quede holgadamente por debajo del límite total.
       </p>
+
+      {/* --- Ventanas rodantes de 2-4 semanas ------------------------------ */}
+      <div className="pt-4 border-t border-border space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h4 className="font-semibold text-sm">Reto en ventana corta (2-4 semanas)</h4>
+            <p className="text-xs text-muted-foreground">
+              Simula el reto empezando en cada día del backtest y lo evalúa sólo durante la
+              duración elegida. La tasa de éxito es la probabilidad real de superarlo a tiempo.
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {[14, 21, 28, 42].map((d) => (
+              <Button
+                key={d}
+                size="sm"
+                variant={windowDays === d ? "default" : "outline"}
+                onClick={() => setWindowDays(d)}
+              >
+                {d}d
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-background/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left px-3 py-2">Estrategia</th>
+                <th className="text-right px-3 py-2">Ventanas</th>
+                <th className="text-right px-3 py-2">% éxito</th>
+                <th className="text-right px-3 py-2">% quiebre</th>
+                <th className="text-right px-3 py-2">Neto medio</th>
+                <th className="text-right px-3 py-2">Mejor ventana</th>
+                <th className="text-right px-3 py-2">Peor ventana</th>
+                <th className="text-right px-3 py-2">Días al objetivo (mediana)</th>
+                <th className="text-right px-3 py-2">Peor DD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rollingRows.map(({ label, summary }) => (
+                <tr key={label} className="border-t border-border">
+                  <td className="px-3 py-2 font-medium">{label}</td>
+                  <td className="text-right px-3 py-2 font-mono">{summary.windows}</td>
+                  <td className={`text-right px-3 py-2 font-mono ${summary.passRate > 0 ? "text-emerald-400" : "text-muted-foreground"}`}>
+                    {summary.passRate.toFixed(1)}%
+                  </td>
+                  <td className="text-right px-3 py-2 font-mono text-red-400">{summary.failRate.toFixed(1)}%</td>
+                  <td className={`text-right px-3 py-2 font-mono ${summary.avgNetPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {summary.avgNetPct >= 0 ? "+" : ""}{summary.avgNetPct.toFixed(2)}%
+                  </td>
+                  <td className="text-right px-3 py-2 font-mono">
+                    +{summary.bestNetPct.toFixed(2)}%
+                    {summary.best && <div className="text-[10px] text-muted-foreground">{summary.best.start}</div>}
+                  </td>
+                  <td className="text-right px-3 py-2 font-mono text-red-400">
+                    {summary.worstNetPct.toFixed(2)}%
+                    {summary.worst && <div className="text-[10px] text-muted-foreground">{summary.worst.start}</div>}
+                  </td>
+                  <td className="text-right px-3 py-2 font-mono">{summary.medianDaysToTarget ?? "—"}</td>
+                  <td className="text-right px-3 py-2 font-mono text-red-400">-{summary.worstMaxDdPct.toFixed(2)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {riskSweep.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h5 className="text-xs uppercase text-muted-foreground">
+                Barrido de riesgo por operación · cartera · ventana {windowDays}d
+              </h5>
+              {bestRisk && (
+                <Badge variant="outline">
+                  Mejor: {bestRisk.riskPct}% / trade → {bestRisk.summary.passRate.toFixed(1)}% éxito
+                </Badge>
+              )}
+            </div>
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full text-sm">
+                <thead className="bg-background/50 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="text-left px-3 py-2">Riesgo / trade</th>
+                    <th className="text-right px-3 py-2">% éxito</th>
+                    <th className="text-right px-3 py-2">% quiebre</th>
+                    <th className="text-right px-3 py-2">Neto medio</th>
+                    <th className="text-right px-3 py-2">Peor DD</th>
+                    <th className="text-right px-3 py-2">Días al objetivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {riskSweep.map(({ riskPct: rp, summary }) => (
+                    <tr
+                      key={rp}
+                      className={`border-t border-border ${bestRisk?.riskPct === rp ? "bg-emerald-500/5" : ""}`}
+                    >
+                      <td className="px-3 py-2 font-mono">
+                        {rp}%
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="ml-2 h-6 px-2 text-[11px]"
+                          onClick={() => setRiskPct(rp)}
+                        >
+                          usar
+                        </Button>
+                      </td>
+                      <td className={`text-right px-3 py-2 font-mono ${summary.passRate > 0 ? "text-emerald-400" : "text-muted-foreground"}`}>
+                        {summary.passRate.toFixed(1)}%
+                      </td>
+                      <td className="text-right px-3 py-2 font-mono text-red-400">{summary.failRate.toFixed(1)}%</td>
+                      <td className={`text-right px-3 py-2 font-mono ${summary.avgNetPct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                        {summary.avgNetPct >= 0 ? "+" : ""}{summary.avgNetPct.toFixed(2)}%
+                      </td>
+                      <td className="text-right px-3 py-2 font-mono text-red-400">-{summary.worstMaxDdPct.toFixed(2)}%</td>
+                      <td className="text-right px-3 py-2 font-mono">{summary.medianDaysToTarget ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Sube el riesgo hasta que el objetivo entre en la ventana, pero manteniendo el
+              % de quiebre en 0 y el peor DD por debajo del límite total.
+            </p>
+          </div>
+        )}
+      </div>
     </section>
   );
 }
