@@ -212,6 +212,136 @@ export function simulateChallenge(
 
 // Riesgo máximo por operación (% del balance) que mantiene la peor racha
 // histórica dentro del límite de pérdida total, con un margen de seguridad.
+// --- Ventanas rodantes: ¿se logra el reto en 2-4 semanas? ---------------
+// Un reto real tiene una duración objetivo (p. ej. 14-28 días naturales).
+// Evaluamos TODAS las ventanas posibles del backtest: por cada día de inicio
+// tomamos las operaciones de los siguientes `windowDays` días y simulamos el
+// reto completo. Así obtenemos la probabilidad real de superarlo a tiempo.
+export type ChallengeWindow = {
+  start: string;          // YYYY-MM-DD UTC
+  end: string;            // YYYY-MM-DD UTC
+  status: ChallengeResult["status"];
+  netPct: number;
+  maxDdPct: number;
+  worstDailyDdPct: number;
+  tradingDays: number;
+  daysToTarget: number | null;
+  trades: number;
+  failReason: string | null;
+};
+
+export type RollingChallengeSummary = {
+  windowDays: number;
+  windows: number;
+  passed: number;
+  failed: number;
+  incomplete: number;
+  passRate: number;             // 0..100
+  failRate: number;             // 0..100
+  avgNetPct: number;
+  bestNetPct: number;
+  worstNetPct: number;
+  worstMaxDdPct: number;
+  medianDaysToTarget: number | null;
+  best: ChallengeWindow | null;
+  worst: ChallengeWindow | null;
+  all: ChallengeWindow[];
+};
+
+function dayKey(ts: number): string {
+  return new Date(ts * 1000).toISOString().slice(0, 10);
+}
+
+export function simulateRollingChallenges(
+  rawTrades: ChallengeTrade[],
+  rulesInput: Partial<FtmoRules> = {},
+  windowDays = 28,
+  stepDays = 1,
+): RollingChallengeSummary {
+  const trades = [...rawTrades].sort((a, b) => a.closeTime - b.closeTime);
+  const empty: RollingChallengeSummary = {
+    windowDays, windows: 0, passed: 0, failed: 0, incomplete: 0,
+    passRate: 0, failRate: 0, avgNetPct: 0, bestNetPct: 0, worstNetPct: 0,
+    worstMaxDdPct: 0, medianDaysToTarget: null, best: null, worst: null, all: [],
+  };
+  if (!trades.length) return empty;
+
+  const firstTs = trades[0]!.closeTime;
+  const lastTs = trades[trades.length - 1]!.closeTime;
+  const span = windowDays * 86_400;
+  const step = Math.max(1, stepDays) * 86_400;
+  const windows: ChallengeWindow[] = [];
+
+  // Alineamos el primer inicio a medianoche UTC del primer trade.
+  let start = Math.floor(firstTs / 86_400) * 86_400;
+  const lastStart = Math.max(start, lastTs - span);
+
+  while (start <= lastStart) {
+    const end = start + span;
+    const slice = trades.filter((t) => t.closeTime >= start && t.closeTime < end);
+    if (slice.length) {
+      const res = simulateChallenge(slice, rulesInput);
+      windows.push({
+        start: dayKey(start),
+        end: dayKey(end - 1),
+        status: res.status,
+        netPct: res.netPct,
+        maxDdPct: Math.max(0, res.maxDdPct),
+        worstDailyDdPct: res.worstDailyDdPct,
+        tradingDays: res.tradingDays,
+        daysToTarget: res.daysToTarget,
+        trades: res.tradesTaken,
+        failReason: res.failReason,
+      });
+    }
+    start += step;
+  }
+  if (!windows.length) return empty;
+
+  const passedWins = windows.filter((w) => w.status === "passed");
+  const failedWins = windows.filter((w) => w.status === "failed");
+  const daysArr = passedWins
+    .map((w) => w.daysToTarget)
+    .filter((d): d is number => typeof d === "number")
+    .sort((a, b) => a - b);
+  const median = daysArr.length
+    ? daysArr[Math.floor((daysArr.length - 1) / 2)]!
+    : null;
+  const sortedByNet = [...windows].sort((a, b) => b.netPct - a.netPct);
+
+  return {
+    windowDays,
+    windows: windows.length,
+    passed: passedWins.length,
+    failed: failedWins.length,
+    incomplete: windows.length - passedWins.length - failedWins.length,
+    passRate: (passedWins.length / windows.length) * 100,
+    failRate: (failedWins.length / windows.length) * 100,
+    avgNetPct: windows.reduce((s, w) => s + w.netPct, 0) / windows.length,
+    bestNetPct: sortedByNet[0]!.netPct,
+    worstNetPct: sortedByNet[sortedByNet.length - 1]!.netPct,
+    worstMaxDdPct: Math.max(...windows.map((w) => w.maxDdPct)),
+    medianDaysToTarget: median,
+    best: sortedByNet[0]!,
+    worst: sortedByNet[sortedByNet.length - 1]!,
+    all: windows,
+  };
+}
+
+// Busca el riesgo por operación (%) más bajo que maximiza la tasa de éxito
+// dentro de la ventana del reto sin romper la pérdida total.
+export function optimizeRiskForWindow(
+  trades: ChallengeTrade[],
+  rulesInput: Partial<FtmoRules>,
+  windowDays: number,
+  candidates: number[] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3],
+): Array<{ riskPct: number; summary: RollingChallengeSummary }> {
+  return candidates.map((riskPct) => ({
+    riskPct,
+    summary: simulateRollingChallenges(trades, { ...rulesInput, riskPerTradePct: riskPct }, windowDays, 1),
+  }));
+}
+
 export function suggestRiskPct(maxDrawdownR: number, maxLossPct: number, safety = 0.6): number {
   if (!Number.isFinite(maxDrawdownR) || maxDrawdownR <= 0) return 1;
   const raw = (maxLossPct * safety) / maxDrawdownR;
