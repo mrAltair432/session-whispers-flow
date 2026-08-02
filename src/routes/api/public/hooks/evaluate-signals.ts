@@ -6,6 +6,7 @@ import type { Signal } from "@/lib/signal-engine";
 import { fetchUpcomingEvents, findBlockingEvent } from "@/lib/economic-calendar";
 import { detectRegime, isRegimeFriendly } from "@/lib/market-regime";
 import { predictProb, scorerVerdict, type ScorerModel } from "@/lib/ml-scorer";
+import { readWeekendGuard, isWeekendWindow } from "@/lib/weekend-guard";
 
 // Server-side cron: evalúa E1/E2/E3 sin necesidad de que el usuario tenga el
 // dashboard abierto. Se llama cada 15 min desde pg_cron durante horario de
