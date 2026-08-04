@@ -833,6 +833,16 @@ def evaluate_smc_london(bars: Bars, params: dict) -> dict | None:
     if not bos_ok:
         return None
     last = m15.iloc[-1]
+    closes15 = m15["close"].to_numpy(dtype=float)
+    ema20_15 = ema(closes15, 20)
+    last_ema15 = ema20_15[-1]
+    m15_confirm = (
+        last["close"] > last["open"] and last["close"] > last_ema15
+        if bias == "long"
+        else last["close"] < last["open"] and last["close"] < last_ema15
+    )
+    if not m15_confirm:
+        return None
     d = datetime.fromtimestamp(int(last["time"]), tz=timezone.utc)
     h_utc = d.hour
     in_kz = 2 <= h_utc < 5

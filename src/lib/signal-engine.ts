@@ -108,7 +108,9 @@ export function generateSignal(
   }
 
   // ---- Step 3: M15 FVG aligned with bias ----
-  const fvgs = detectFVGs(m15, 20);
+  // E1 v3 fue optimizada con una ventana de 30 velas. Mantenerla idéntica
+  // en dashboard y Colab evita que ambos motores evalúen FVG distintos.
+  const fvgs = detectFVGs(m15, 30);
   const targetBias = bias === "long" ? "bullish" : "bearish";
   const validFvg = [...fvgs].reverse().find((f) => f.bias === targetBias);
   if (!validFvg) return null;
@@ -131,8 +133,8 @@ export function generateSignal(
   const recentAtr = atrSeries.slice(-80).filter((v) => v > 0).sort((a, b) => a - b);
   const median = recentAtr.length ? recentAtr[Math.floor(recentAtr.length / 2)] : lastAtr;
   const atrRatio = median > 0 ? lastAtr / median : 1;
-  // Reject dead markets in full profile
-  if (profile === "full" && atrRatio < 0.6) return null;
+  // Umbral validado en la optimización anual de E1 v3.
+  if (profile === "full" && atrRatio < 0.7) return null;
 
   // ---- Step 6: H1 EMA alignment ----
   let h1Aligned = false;
@@ -152,9 +154,12 @@ export function generateSignal(
     h1Sweep: profile === "m15" ? 0 : 25,
     m15Fvg: 20,
     m15Bos: bosOk ? 10 : 0,
-    killzone: kz ? 10 : 3,
-    atr: atrRatio >= 1 ? 10 : atrRatio >= 0.8 ? 6 : atrRatio >= 0.6 ? 3 : 0,
-    h1Alignment: h1Aligned ? 5 : 0,
+    killzone: kz ? 10 : 0,
+    atr: atrRatio >= 1 ? 10 : atrRatio >= 0.85 ? 7 : atrRatio >= 0.7 ? 4 : 0,
+    // La alineación H1 sigue siendo informativa salvo que requireH1Align=true.
+    // El perfil v3 validado reservó estos 5 puntos de contexto H1 porque el
+    // sweep alineado ya es obligatorio.
+    h1Alignment: profile === "full" ? 5 : h1Aligned ? 5 : 0,
     total: 0,
   };
   breakdown.total =
