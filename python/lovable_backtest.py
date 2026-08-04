@@ -806,6 +806,9 @@ def evaluate_straddle_breakout(bars: Bars, params: dict) -> dict | None:
 
 def evaluate_smc_london(bars: Bars, params: dict) -> dict | None:
     min_score = params.get("min_score", 70)
+    max_risk_atr = params.get("maxRiskAtrMult", params.get("max_risk_atr_mult", 1.2))
+    break_even_at_r = params.get("breakEvenAtR", params.get("break_even_at_r", 0.5))
+    time_stop_bars = params.get("timeStopBars", params.get("time_stop_bars", 24))
     h4 = bars.get("H4"); h1 = bars.get("H1"); m15 = bars.get("M15")
     if h4 is None or h1 is None or m15 is None:
         return None
@@ -850,17 +853,23 @@ def evaluate_smc_london(bars: Bars, params: dict) -> dict | None:
     if breakdown["total"] < min_score:
         return None
     entry = float(last["close"])
-    buffer_ = max(last_atr * 0.5, (last["high"] - last["low"]) * 0.4)
-    sl = fvg["bottom"] - buffer_ if bias == "long" else fvg["top"] + buffer_
+    buffer_ = max(last_atr * 0.3, (last["high"] - last["low"]) * 0.5)
+    sl = sweep["sweptPrice"] - buffer_ if bias == "long" else sweep["sweptPrice"] + buffer_
     risk = abs(entry - sl)
     if risk <= 0:
+        return None
+    if max_risk_atr and last_atr > 0 and risk > max_risk_atr * last_atr:
         return None
     tp1 = entry + risk if bias == "long" else entry - risk
     tp2 = entry + risk * 2 if bias == "long" else entry - risk * 2
     tp3 = entry + risk * 3 if bias == "long" else entry - risk * 3
     return {"bias": bias, "score": breakdown["total"], "scoreBreakdown": breakdown,
             "entry": _round(entry), "stopLoss": _round(sl),
-            "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3)}
+            "tp1": _round(tp1), "tp2": _round(tp2), "tp3": _round(tp3),
+            "management": {
+                "breakEvenAtR": break_even_at_r,
+                "timeStopBars": time_stop_bars,
+            }}
 
 
 # ---- E2: Alligator + Bollinger Breakout (M15) ----------------------------
@@ -1157,7 +1166,8 @@ class StrategyEngine:
 STRATEGIES: dict[str, StrategyEngine] = {
     "smc_london": StrategyEngine(
         "smc_london", "SMC Londres", "M15",
-        ("H4", "H1", "M15"), evaluate_smc_london, {"min_score": 70}),
+        ("H4", "H1", "M15"), evaluate_smc_london,
+        {"min_score": 70, "maxRiskAtrMult": 1.2, "breakEvenAtR": 0.5, "timeStopBars": 24}),
     "alligator_bb": StrategyEngine(
         "alligator_bb", "Alligator + BB v4 (M15)", "M15",
         ("H4", "H1", "M15"), evaluate_alligator_bb, {"min_score": 70}),
