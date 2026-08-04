@@ -56,7 +56,13 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     shortName: "E1 · SMC Londres",
     description:
       "v3 FTMO (optimizada y validada sobre 1 año de XAUUSD M1): tendencia H4 + barrido de liquidez H1 + FVG/BOS en M15. SL limitado a 1.2×ATR(M15), break-even a 0.5R, time-stop de 24 velas y cooldown de 1 hora para elevar frecuencia sin duplicar señales. Backtest 1 año: 224 trades, 62.1% WR, +113.3R, PF 3.22 y Max DD 4.0R. En ventanas de 28 días alcanzó 81.9% de éxito y 0% de quiebre con el perfil agresivo de 2%/trade; validar siempre fuera de muestra antes de usar capital real.",
-    defaultParams: { minScore: 70, maxRiskAtrMult: 1.2, breakEvenAtR: 0.5, timeStopBars: 24 },
+    defaultParams: {
+      minScore: 70,
+      maxRiskAtrMult: 1.2,
+      breakEvenAtR: 0.5,
+      timeStopBars: 24,
+      requireBos: true,
+    },
     killzoneHoursUTC: [2, 3, 4],
     triggerTf: "M15",
     requiredTfs: ["H4", "H1", "M15"],

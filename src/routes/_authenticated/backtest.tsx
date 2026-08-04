@@ -771,7 +771,7 @@ function BacktestPage() {
               Simular costos de ejecución
             </label>
             <p className="text-xs text-muted-foreground">
-              Se aplica en TF M1 por defecto. Coste por lado = <span className="font-mono">spread/2 + slippage + comisión</span>.
+              Se aplica únicamente a estrategias M1. E1/E2 M15 conservan la ejecución calibrada de su versión optimizada. Coste por lado = <span className="font-mono">spread/2 + slippage + comisión</span>.
               Se descuenta en cada fill (entrada + parciales + cierre).
             </p>
           </div>

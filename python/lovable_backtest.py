@@ -833,9 +833,20 @@ def evaluate_smc_london(bars: Bars, params: dict) -> dict | None:
     if not bos_ok:
         return None
     last = m15.iloc[-1]
+    closes15 = m15["close"].to_numpy(dtype=float)
+    ema20_15 = ema(closes15, 20)
+    last_ema15 = ema20_15[-1]
+    m15_confirm = (
+        last["close"] > last["open"] and last["close"] > last_ema15
+        if bias == "long"
+        else last["close"] < last["open"] and last["close"] < last_ema15
+    )
+    if not m15_confirm:
+        return None
     d = datetime.fromtimestamp(int(last["time"]), tz=timezone.utc)
     h_utc = d.hour
-    in_kz = 2 <= h_utc < 5
+    # Paridad con getKillzone() del dashboard: Londres + Nueva York.
+    in_kz = (2 <= h_utc < 5) or (12 <= h_utc < 15)
     m15_atr = atr(m15["high"].values, m15["low"].values, m15["close"].values, 14)
     last_atr = m15_atr[-1] or 1
     recent = np.sort(m15_atr[-80:][m15_atr[-80:] > 0])
@@ -1161,13 +1172,15 @@ class StrategyEngine:
     required_tfs: tuple[str, ...]
     evaluate: Callable[[Bars, dict], dict | None]
     default_params: dict
+    backtest_defaults: dict = field(default_factory=dict)
 
 
 STRATEGIES: dict[str, StrategyEngine] = {
     "smc_london": StrategyEngine(
         "smc_london", "SMC Londres", "M15",
         ("H4", "H1", "M15"), evaluate_smc_london,
-        {"min_score": 70, "maxRiskAtrMult": 1.2, "breakEvenAtR": 0.5, "timeStopBars": 24}),
+        {"min_score": 70, "maxRiskAtrMult": 1.2, "breakEvenAtR": 0.5, "timeStopBars": 24},
+        {"cooldown_bars": 4, "max_hold_bars": 96}),
     "alligator_bb": StrategyEngine(
         "alligator_bb", "Alligator + BB v4 (M15)", "M15",
         ("H4", "H1", "M15"), evaluate_alligator_bb, {"min_score": 70}),
@@ -1255,8 +1268,10 @@ def run_backtest_bars(
     if trig is None or trig.empty:
         return {"engine_key": engine_key, "metrics": compute_metrics([]), "trades": []}
     tf_min = TF_MINUTES[trigger_tf]
-    default_max_hold = max(20, round(24 * 60 / tf_min))
-    default_cooldown = max(3, round(4 * 60 / tf_min))
+    default_max_hold = int(strat.backtest_defaults.get(
+        "max_hold_bars", max(20, round(24 * 60 / tf_min))))
+    default_cooldown = int(strat.backtest_defaults.get(
+        "cooldown_bars", max(3, round(4 * 60 / tf_min))))
     warmup = warmup_bars if warmup_bars is not None else (300 if trigger_tf == "M1" else 100)
     max_hold = max_hold_bars if max_hold_bars is not None else default_max_hold
     cooldown = cooldown_bars if cooldown_bars is not None else default_cooldown
