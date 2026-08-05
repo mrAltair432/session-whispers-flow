@@ -72,8 +72,8 @@ export function evaluateFiboGridCent(
 ): Signal {
   const minScore = params.minScore ?? 45;
   const fiboLevel = params.fiboLevel ?? 0.618;
-  const maxOrders = params.maxOrders ?? 100;
-  const gridStepAtr = params.gridStepAtr ?? 0.35;
+  const maxOrders = params.maxOrders ?? 30;
+  const gridStepAtr = params.gridStepAtr ?? 1.6;
   const atrMediumRatio = params.atrMediumRatio ?? 1.3;
   const atrBlockRatio = params.atrBlockRatio ?? 2.4;
   const rsiLow = params.rsiLow ?? 35;
@@ -81,8 +81,8 @@ export function evaluateFiboGridCent(
   const expireMinutes = params.expireMinutes ?? 66;
   const dailyTargetR = params.dailyTargetR ?? 3;
   const dailyLossLimitR = params.dailyLossLimitR ?? 2;
-  const slAtrMult = params.slAtrMult ?? 8;
-  const tpAtrMult = params.tpAtrMult ?? 2;
+  const slAtrMult = params.slAtrMult ?? 3;
+  const tpAtrMult = params.tpAtrMult ?? 0.8;
   const longBias = params.longBias ?? 3;
   const requireAo = params.requireAo ?? false;
 
