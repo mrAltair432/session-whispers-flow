@@ -1,6 +1,7 @@
 import type { Candle } from "./analysis";
 import { atr as atrSeries } from "./analysis";
 import { getStrategy, type Bars, type EngineKey, type StrategyParams } from "./strategies";
+import type { GridPlan } from "./signal-engine";
 import type { TfKey } from "./csv-parser";
 
 // Costos de ejecución en USD (oro). El precio de entrada real se degrada
@@ -53,6 +54,10 @@ export type BacktestTrade = {
   hourUTC: number;
   weekday: number; // 0=Sun..6=Sat
   features: number[]; // vector para el clasificador IA (orden en FEATURE_NAMES)
+  // Sólo motores tipo grid: nº de órdenes del cesto que se llenaron y
+  // exposición máxima simultánea (posiciones abiertas a la vez).
+  gridFills?: number;
+  gridMaxOpen?: number;
 };
 
 // Nombres de features en el mismo orden que buildFeatures().
@@ -311,6 +316,163 @@ export function simulateTrade(
   return closeRemaining(last.close, last.time, "timeout");
 }
 
+// ---------------------------------------------------------------------------
+// Simulador de CESTO (grid): replica el comportamiento real del EA Fibonacci
+// 61.8 — siembra N pendientes del mismo lote, cada fill es una posición
+// independiente con su SL/TP, y el cesto se cierra cuando no quedan
+// posiciones ni pendientes vivas (o al agotar el hold máximo).
+// El resultado se expresa en R donde 1R = riesgo de UNA posición, de forma
+// que el MAE del cesto muestra el riesgo acumulado REAL (p. ej. −12R si se
+// llenan 12 órdenes en contra a la vez).
+// ---------------------------------------------------------------------------
+type GridPosition = {
+  side: "long" | "short";
+  entry: number;
+  sl: number;
+  tp: number;
+  beMoved: boolean;
+  best: number;
+};
+
+export function simulateGridBasket(
+  bars: Candle[],
+  startIdx: number,
+  plan: GridPlan,
+  maxHoldBars: number,
+  costPerSideUsd: number,
+  management?: { breakEvenAtR?: number; trailAfterR?: number; trailStepAtrMult?: number },
+  atrArr?: number[],
+): {
+  exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number;
+  maeR: number; mfeR: number; fills: number; maxOpen: number;
+} {
+  const risk = plan.slDist;
+  if (!(risk > 0)) {
+    const c = bars[startIdx];
+    return { exit: c.close, rMultiple: 0, outcome: "timeout", closeTime: c.time, maeR: 0, mfeR: 0, fills: 0, maxOpen: 0 };
+  }
+  const costR = costPerSideUsd / risk;
+  const maxOpenAllowed = plan.maxOpenPositions ?? plan.orders.length + 1;
+  const expireIdx = startIdx + (plan.expireBars ?? maxHoldBars);
+
+  const pending = plan.orders.map((o) => ({ ...o, filled: false }));
+  const open: GridPosition[] = [];
+  let realizedR = 0;
+  let fills = 0;
+  let maxOpen = 0;
+  let maeR = 0;
+  let mfeR = 0;
+  let lastPrice = bars[startIdx].close;
+  let closeTime = bars[startIdx].time;
+
+  const openPosition = (side: "long" | "short", price: number) => {
+    if (open.length >= maxOpenAllowed) return;
+    open.push({
+      side,
+      entry: price,
+      sl: side === "long" ? price - plan.slDist : price + plan.slDist,
+      tp: side === "long" ? price + plan.tpDist : price - plan.tpDist,
+      beMoved: false,
+      best: price,
+    });
+    fills += 1;
+    realizedR -= costR; // coste de apertura
+    if (open.length > maxOpen) maxOpen = open.length;
+  };
+
+  if (plan.includeMarketEntry) {
+    const first = bars[Math.min(startIdx + 1, bars.length - 1)];
+    openPosition(plan.orders[0]?.side ?? "long", first.open);
+  }
+
+  const closePosition = (idx: number, price: number) => {
+    const p = open[idx];
+    const moveR = p.side === "long" ? (price - p.entry) / risk : (p.entry - price) / risk;
+    realizedR += moveR - costR;
+    open.splice(idx, 1);
+  };
+
+  const end = Math.min(bars.length - 1, startIdx + maxHoldBars);
+  for (let i = startIdx + 1; i <= end; i++) {
+    const c = bars[i];
+    lastPrice = c.close;
+    closeTime = c.time;
+
+    // 1) Fills de pendientes (una orden por barra y nivel, sin repetición)
+    if (i <= expireIdx) {
+      for (const o of pending) {
+        if (o.filled) continue;
+        const hit =
+          o.side === "long"
+            ? o.kind === "limit" ? c.low <= o.price : c.high >= o.price
+            : o.kind === "limit" ? c.high >= o.price : c.low <= o.price;
+        if (hit) {
+          o.filled = true;
+          openPosition(o.side, o.price);
+        }
+      }
+    }
+
+    // 2) Excursión flotante del cesto (conservadora: todas en contra a la vez)
+    let worstSum = 0;
+    let bestSum = 0;
+    for (const p of open) {
+      const worstPx = p.side === "long" ? Math.max(c.low, p.sl) : Math.min(c.high, p.sl);
+      const bestPx = p.side === "long" ? Math.min(c.high, p.tp) : Math.max(c.low, p.tp);
+      worstSum += p.side === "long" ? (worstPx - p.entry) / risk : (p.entry - worstPx) / risk;
+      bestSum += p.side === "long" ? (bestPx - p.entry) / risk : (p.entry - bestPx) / risk;
+    }
+    if (realizedR + worstSum < maeR) maeR = realizedR + worstSum;
+    if (realizedR + bestSum > mfeR) mfeR = realizedR + bestSum;
+
+    // 3) SL primero (conservador), luego TP
+    for (let k = open.length - 1; k >= 0; k--) {
+      const p = open[k];
+      const slHit = p.side === "long" ? c.low <= p.sl : c.high >= p.sl;
+      if (slHit) { closePosition(k, p.sl); continue; }
+      const tpHit = p.side === "long" ? c.high >= p.tp : c.low <= p.tp;
+      if (tpHit) { closePosition(k, p.tp); }
+    }
+
+    // 4) Gestión por posición (BE + trailing escalonado) al cierre de la vela
+    const beAtR = management?.breakEvenAtR;
+    const trailAfterR = management?.trailAfterR;
+    const trailStep = management?.trailStepAtrMult;
+    for (const p of open) {
+      if (!p.beMoved && beAtR && beAtR > 0) {
+        const trigger = p.side === "long" ? p.entry + beAtR * risk : p.entry - beAtR * risk;
+        const reached = p.side === "long" ? c.high >= trigger : c.low <= trigger;
+        if (reached) { p.sl = p.entry; p.beMoved = true; }
+      }
+      if (trailAfterR && trailStep && atrArr?.length) {
+        p.best = p.side === "long" ? Math.max(p.best, c.high) : Math.min(p.best, c.low);
+        const runR = p.side === "long" ? (p.best - p.entry) / risk : (p.entry - p.best) / risk;
+        const step = atrArr[i] * trailStep;
+        if (runR >= trailAfterR && step > 0) {
+          if (p.side === "long") {
+            const cand = p.entry + Math.floor((p.best - p.entry) / step) * step - step;
+            if (cand > p.sl) p.sl = cand;
+          } else {
+            const cand = p.entry - Math.floor((p.entry - p.best) / step) * step + step;
+            if (cand < p.sl) p.sl = cand;
+          }
+        }
+      }
+    }
+
+    // 5) Cesto terminado: sin posiciones y sin pendientes vivas
+    const pendingAlive = i <= expireIdx && pending.some((o) => !o.filled);
+    if (!open.length && !pendingAlive) break;
+  }
+
+  // Cierre forzado del remanente a mercado
+  for (let k = open.length - 1; k >= 0; k--) closePosition(k, lastPrice);
+
+  const outcome: BacktestTrade["outcome"] =
+    realizedR > 0.05 ? "tp1" : realizedR < -0.05 ? "sl" : "be";
+  return { exit: lastPrice, rMultiple: realizedR, outcome, closeTime, maeR, mfeR, fills, maxOpen };
+}
+
 function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
   const n = trades.length;
   const outcomeCounts = { tp1: 0, tp2: 0, tp3: 0, sl: 0, be: 0, timeout: 0 } as Record<BacktestTrade["outcome"], number>;
@@ -485,6 +647,43 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     // cierre parcial/total), evitando distorsionar SL/TP absolutos.
     const entry = entryBar.open;
     const dist = Math.abs(signal.entry - signal.stopLoss);
+
+    // --- Motores tipo grid: se simula el cesto completo -------------------
+    if (signal.grid && signal.grid.orders.length) {
+      const gsim = simulateGridBasket(
+        triggerBars, entryBarIdx, signal.grid, maxHold, costPerSideUsd, signal.management, triggerAtr,
+      );
+      const dg = new Date(entryBar.time * 1000);
+      const dkg = dayKey(entryBar.time);
+      dailyPnl.set(dkg, (dailyPnl.get(dkg) ?? 0) + gsim.rMultiple);
+      trades.push({
+        openTime: entryBar.time,
+        closeTime: gsim.closeTime,
+        bias: signal.bias,
+        score: signal.score,
+        entry,
+        stopLoss: signal.bias === "long" ? entry - signal.grid.slDist : entry + signal.grid.slDist,
+        tp1: signal.bias === "long" ? entry + signal.grid.tpDist : entry - signal.grid.tpDist,
+        tp2: signal.tp2,
+        tp3: signal.tp3,
+        exit: gsim.exit,
+        rMultiple: gsim.rMultiple,
+        outcome: gsim.outcome,
+        maeR: gsim.maeR,
+        mfeR: gsim.mfeR,
+        hourUTC: dg.getUTCHours(),
+        weekday: dg.getUTCDay(),
+        gridFills: gsim.fills,
+        gridMaxOpen: gsim.maxOpen,
+        features: signal.features
+          ?? buildFeatures(signal.scoreBreakdown, signal.bias, dg.getUTCHours(), dg.getUTCDay()),
+      });
+      const gExitIdx = triggerBars.findIndex((c) => c.time >= gsim.closeTime);
+      lastExitIdx = gExitIdx >= 0 ? gExitIdx : entryBarIdx + maxHold;
+      i = lastExitIdx;
+      continue;
+    }
+
     // Respetamos los ratios R que declara la estrategia (por defecto 1R/2R/3R).
     // Motores tipo grid usan TPs cortos (<1R) con SL holgado, y forzar 1R/2R/3R
     // deformaría por completo su perfil de resultados.

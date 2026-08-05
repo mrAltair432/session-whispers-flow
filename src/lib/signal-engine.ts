@@ -5,6 +5,25 @@ import {
 
 export type SignalProfile = "full" | "h1m15" | "m15";
 
+// Plan de rejilla (grid) emitido por motores tipo "Fibonacci 61.8 EA": en vez
+// de una sola posición, la estrategia siembra N órdenes pendientes del mismo
+// lote. El simulador abre cada fill como posición independiente y agrega el
+// resultado del cesto, de modo que el MAE refleja el riesgo REAL acumulado.
+export type GridOrder = {
+  price: number;
+  side: "long" | "short";
+  kind: "limit" | "stop";
+};
+
+export type GridPlan = {
+  orders: GridOrder[];
+  slDist: number;            // distancia de SL por posición (USD)
+  tpDist: number;            // distancia de TP por posición (USD)
+  expireBars?: number;       // caducidad de las pendientes (barras del trigger TF)
+  maxOpenPositions?: number; // tope de posiciones simultáneas del cesto
+  includeMarketEntry?: boolean; // abre además la posición a mercado inicial
+};
+
 export type ScoreBreakdown = {
   h4Trend: number;     // /20
   h1Sweep: number;     // /25
@@ -49,6 +68,8 @@ export type Signal = {
     trailAfterR?: number;
     trailStepAtrMult?: number;
   };
+  // Si está presente, el backtest simula el cesto completo de órdenes.
+  grid?: GridPlan;
 } | null;
 
 export type EngineOptions = {
