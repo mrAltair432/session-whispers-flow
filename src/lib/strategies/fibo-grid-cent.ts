@@ -82,7 +82,7 @@ export function evaluateFiboGridCent(
   const dailyTargetR = params.dailyTargetR ?? 3;
   const dailyLossLimitR = params.dailyLossLimitR ?? 2;
   const slAtrMult = params.slAtrMult ?? 3;
-  const tpAtrMult = params.tpAtrMult ?? 0.8;
+  const tpAtrMult = params.tpAtrMult ?? 1.2;
   const longBias = params.longBias ?? 3;
   const requireAo = params.requireAo ?? false;
 
