@@ -100,7 +100,7 @@ export function detectRegime(h1: Candle[]): RegimeInfo {
 // Regímenes preferidos por estrategia. Si la señal cae fuera → downgrade.
 export const ENGINE_REGIME_WHITELIST: Record<string, Regime[]> = {
   smc_london: ["trend_up", "trend_down", "high_vol"],
-  alligator_bb: ["trend_up", "trend_down"],
+  keltner_pullback: ["trend_up", "trend_down"],
   fibo_scalping: ["range", "trend_up", "trend_down"],
   ema_cross_m1: ["trend_up", "trend_down", "high_vol"],
   vwap_reversal: ["range", "low_vol"],

@@ -1,6 +1,6 @@
 import type { Candle } from "../analysis";
 import { generateSignal as smcGenerate, type Signal } from "../signal-engine";
-import { evaluateAlligatorBB } from "./alligator-bb";
+import { evaluateKeltnerPullback } from "./keltner-pullback";
 import { evaluateFiboScalping } from "./fibo-scalping";
 import { evaluateGoldScalping } from "./gold-scalping";
 import { evaluateEmaCrossM1 } from "./ema-cross-m1";
@@ -11,7 +11,7 @@ import type { TfKey } from "../csv-parser";
 
 export type EngineKey =
   | "smc_london"
-  | "alligator_bb"
+  | "keltner_pullback"
   | "fibo_scalping"
   | "gold_scalping"
   | "ema_cross_m1"
@@ -86,18 +86,19 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
         trailStepAtrMult: params.trailStepAtrMult as number | undefined,
       }),
   },
-  alligator_bb: {
-    key: "alligator_bb",
-    name: "Alligator + Bollinger Breakout (M15)",
-    shortName: "E2 · Alligator BB",
+  keltner_pullback: {
+    key: "keltner_pullback",
+    name: "Keltner Pullback Continuation (M15)",
+    shortName: "E2 · Keltner Pullback",
     description:
-      "v4: Alligator (13/8/5) + Bollinger(20,2) con TTM-Squeeze release (BB dentro de Keltner 1.5×ATR y ahora fuera), confirmación de Awesome Oscillator (Bill Williams), ADX≥22, doble EMA200 (H1+H4) con pendiente, y ventana Londres-NY overlap 12-17 UTC. Retest tras breakout, cuerpo ≥65%, mecha opuesta ≤30%. SL estructural (swing±0.3×ATR, cap 1.8×ATR). BE@0.7R, time-stop 10.",
-    defaultParams: { minScore: 70 },
-    killzoneHoursUTC: [12, 13, 14, 15, 16, 17],
+      "Sustituye a Alligator BB. Basada en el Custom Keltner Channel del artículo MQL5 14169: EMA(típico,10) ± 2.5× media del rango. Sólo opera el rebote hacia dentro del canal A FAVOR de la EMA200 M15 (pullback de continuación, no reversión). SL 2.0×ATR(14), TP 3R, sin break-even ni time-stop (validado: el BE temprano hunde el PF a 0.24). Barrido de 450 combinaciones sobre 100k velas M15 reales (~2.8 años): 361 trades, 31.3% WR, +90.4R, PF 1.36, Max DD 15.0R, Sharpe 1.54 (≈129 trades/año). La variante ruptura del artículo se descartó (PF ~1.05 con DD 50-80R).",
+    defaultParams: { minScore: 60, period: 10, mult: 2.5, slAtrMult: 2, tpRR: 3 },
+    killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
     triggerTf: "M15",
-    requiredTfs: ["H4", "H1", "M15"],
+    requiredTfs: ["H1", "M15"],
+    backtestDefaults: { cooldownBars: 2, maxHoldBars: 200 },
     evaluate: (bars, params) =>
-      evaluateAlligatorBB(bars.M15 ?? [], bars.H1 ?? [], (params.minScore as number) ?? 70, bars.H4),
+      evaluateKeltnerPullback(bars.M15 ?? [], bars.H1, params as never),
   },
   fibo_scalping: {
     key: "fibo_scalping",
