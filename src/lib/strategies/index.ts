@@ -156,7 +156,7 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     name: "Fibo 61.8 Grid Cent (XAUUSD)",
     shortName: "E7 · Fibo 61.8 Cent",
     description:
-      "v2 optimizada con simulación REAL de cesto (cada orden pendiente se rastrea como posición independiente). Réplica del 'Fibonacci 61.8 EA' (MQL5 178321) para cuentas CENT (100 USD = 10.000 cents): re-mide el fibo del swing H1 cada minuto, borra y recoloca las pendientes combinando LIMIT (retroceso) y STOP (impulso) con sesgo 3:1, mismo lote (SIN martingala). RSI(14) 35/75, Awesome Oscillator y MA(15m); régimen ATR relativo. Barrido de 204 combinaciones sobre XAUUSD M1: ganador 30 órdenes, paso 1.6×ATR, SL 3×ATR y TP 0.8×ATR. Backtest 12 meses: 1.717 trades, 70% WR, +48.2R, PF 1.12, Max DD 16.2R, peor flotante −4.7R y hasta 7 posiciones simultáneas. Alto riesgo: desactivada por defecto y excluida de FTMO.",
+      "v3 optimizada con simulación REAL de cesto (cada orden pendiente se rastrea como posición independiente). Réplica del 'Fibonacci 61.8 EA' (MQL5 178321) para cuentas CENT (100 USD = 10.000 cents): re-mide el fibo del swing H1 cada minuto, borra y recoloca las pendientes combinando LIMIT (retroceso) y STOP (impulso) con sesgo 3:1, mismo lote (SIN martingala). RSI(14) 35/75, Awesome Oscillator y MA(15m); régimen ATR relativo. Nuevo barrido sobre 12 meses de XAUUSD M1 (36 combinaciones de SL/TP/paso con riesgo real): ganador 30 órdenes, paso 1.6×ATR, SL 3×ATR y TP 1.2×ATR (antes 0.8× — el TP corto era el que aplanaba la curva). Resultado 12 meses: 1.563 trades, 55.5% WR, +77.3R (antes +43.4R), PF 1.20, Max DD 13.3R (antes 17.1R), Sharpe 2.71 (antes 1.61), curva de equity mucho más lineal (R² 0.89) y peor flotante −3.8R. Alto riesgo: desactivada por defecto y excluida de FTMO.",
     defaultParams: {
       minScore: 45,
       fiboLevel: 0.618,
@@ -170,7 +170,7 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
       dailyTargetR: 3,
       dailyLossLimitR: 2,
       slAtrMult: 3,
-      tpAtrMult: 0.8,
+      tpAtrMult: 1.2,
       longBias: 3,
       requireAo: false,
     },
