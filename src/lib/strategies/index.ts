@@ -1,6 +1,6 @@
 import type { Candle } from "../analysis";
 import { generateSignal as smcGenerate, type Signal } from "../signal-engine";
-import { evaluateAlligatorBB } from "./alligator-bb";
+import { evaluateKeltnerPullback } from "./keltner-pullback";
 import { evaluateFiboScalping } from "./fibo-scalping";
 import { evaluateGoldScalping } from "./gold-scalping";
 import { evaluateEmaCrossM1 } from "./ema-cross-m1";
@@ -11,7 +11,7 @@ import type { TfKey } from "../csv-parser";
 
 export type EngineKey =
   | "smc_london"
-  | "alligator_bb"
+  | "keltner_pullback"
   | "fibo_scalping"
   | "gold_scalping"
   | "ema_cross_m1"
