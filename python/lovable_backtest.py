@@ -589,16 +589,21 @@ def evaluate_ultrascalp_fibo_adaptive(bars: Bars, params: dict) -> dict | None:
         return None
     entry = float(last5["close"]); risk = max(sl_mult * a5, a5)
     sign = 1 if direction == 1 else -1
+    breakdown = {"h4Trend": 20, "h1Sweep": 25, "m15Fvg": 20 if fib >= .786 else 16,
+                 "m15Bos": 10, "killzone": 10 if hour < 17 else 6,
+                 "atr": 10 if leg_range >= min_leg_atr * a15 * 1.4 else 7,
+                 "h1Alignment": 5, "total": score}
     return {
         "bias": bias, "score": score,
         "entry": _round(entry), "stopLoss": _round(entry - sign * risk),
         "tp1": _round(entry + sign * risk * tp_rr),
         "tp2": _round(entry + sign * risk * tp_rr * 1.25),
         "tp3": _round(entry + sign * risk * tp_rr * 1.5),
-        "breakdown": {"h4Trend": 20, "h1Sweep": 25, "m15Fvg": 20 if fib >= .786 else 16,
-                      "m15Bos": 10, "killzone": 10 if hour < 17 else 6,
-                      "atr": 10 if leg_range >= min_leg_atr * a15 * 1.4 else 7,
-                      "h1Alignment": 5, "total": score},
+        "scoreBreakdown": breakdown,
+        "management": {"breakEvenAtR": float(params.get("breakEvenAtR", .8)),
+                       "timeStopBars": int(params.get("maxHoldBars", 36)),
+                       "trailAfterR": float(params.get("trailAfterR", 1.2)),
+                       "trailStepAtrMult": float(params.get("trailStepAtrMult", .8))},
     }
 
 
@@ -1458,9 +1463,15 @@ def run_backtest_bars(
         dist = abs(sig["entry"] - sig["stopLoss"])
         bias = sig["bias"]
         sl = entry - dist if bias == "long" else entry + dist
-        tp1 = entry + dist if bias == "long" else entry - dist
-        tp2 = entry + dist * 2 if bias == "long" else entry - dist * 2
-        tp3 = entry + dist * 3 if bias == "long" else entry - dist * 3
+        def rr(target: float, fallback: float) -> float:
+            value = abs(float(target) - float(sig["entry"])) / dist if dist > 0 else 0
+            return value if math.isfinite(value) and value > 0 else fallback
+        r1 = rr(sig["tp1"], 1.0)
+        r2 = rr(sig["tp2"], r1 * 2)
+        r3 = rr(sig["tp3"], r1 * 3)
+        tp1 = entry + dist * r1 if bias == "long" else entry - dist * r1
+        tp2 = entry + dist * r2 if bias == "long" else entry - dist * r2
+        tp3 = entry + dist * r3 if bias == "long" else entry - dist * r3
         sim = simulate_trade(
             trig, entry_idx, bias, entry, sl, tp1, tp2, tp3, max_hold, cost_per_side,
             management=sig.get("management"),
