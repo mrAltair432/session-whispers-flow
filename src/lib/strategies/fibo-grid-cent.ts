@@ -1,5 +1,5 @@
 import { ema, atr, rsi, detectSwings, type Candle } from "../analysis";
-import type { Signal } from "../signal-engine";
+import type { GridOrder, Signal } from "../signal-engine";
 
 // Estrategia 7: Fibo 61.8 Cent (réplica optimizada del "Fibonacci 61.8 EA")
 // ------------------------------------------------------------------------
@@ -196,7 +196,20 @@ export function evaluateFiboGridCent(
   for (let i = 1; i <= Math.ceil(counterBias / 2); i++) {
     counterLevels.push(round(bias === "long" ? entry + gridStep * i : entry - gridStep * i));
   }
-  const gridLevels = limits;
+  // Cesto real que ejecutará el simulador: mismas pendientes que el EA
+  // original (LIMIT a favor del retroceso, STOP a favor del impulso y
+  // cobertura contraria), todas con el mismo lote y SL/TP individuales.
+  const counterSide: "long" | "short" = bias === "long" ? "short" : "long";
+  const gridOrdersPlan: GridOrder[] = [
+    ...limits.map((p): GridOrder => ({ price: p, side: bias, kind: "limit" })),
+    ...stops.map((p): GridOrder => ({ price: p, side: bias, kind: "stop" })),
+    ...counterLevels.map((p): GridOrder => ({
+      price: p,
+      side: counterSide,
+      // para el lado contrario, un precio por encima (long bias) es un SELL LIMIT
+      kind: "limit",
+    })),
+  ];
 
   const confidence: "high" | "medium" = breakdown.total >= 80 && aoOk ? "high" : "medium";
 
@@ -233,6 +246,14 @@ export function evaluateFiboGridCent(
       timeStopBars: m1 && m1.length ? 1440 : 96,
       trailAfterR: 0.2,
       trailStepAtrMult: 8,
+    },
+    grid: {
+      orders: gridOrdersPlan,
+      slDist,
+      tpDist,
+      expireBars: m1 && m1.length ? expireMinutes : Math.max(4, Math.round(expireMinutes / 15)),
+      maxOpenPositions: gridOrders,
+      includeMarketEntry: true,
     },
   };
 }
