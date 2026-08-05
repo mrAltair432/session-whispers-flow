@@ -12,6 +12,7 @@ const ENGINE_KEYS = [
   "ema_cross_m1",
   "straddle_breakout",
   "fibo_grid_cent",
+  "ultrascalp_fibo_adaptive",
 ] as const;
 
 export const listMyStrategyParams = createServerFn({ method: "GET" })

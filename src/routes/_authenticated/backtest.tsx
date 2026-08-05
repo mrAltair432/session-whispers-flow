@@ -110,7 +110,9 @@ function BacktestPage() {
   const pool = useOptimizerPool();
 
   const [minScoreOverride, setMinScoreOverride] = useState<number | "">("");
-  const [enginesSelected, setEnginesSelected] = useState<EngineKey[]>(allStrategies.map((s) => s.key));
+  const [enginesSelected, setEnginesSelected] = useState<EngineKey[]>(
+    allStrategies.filter((s) => s.defaultEnabled !== false).map((s) => s.key),
+  );
   const [optimizerEngine, setOptimizerEngine] = useState<EngineKey>("smc_london");
   const [autoTimeFilters, setAutoTimeFilters] = useState(true);
   const [excludeHours, setExcludeHours] = useState<number[]>([]);
@@ -1087,7 +1089,7 @@ function BacktestPage() {
 
             {data.results.map((r) => <ProfileDetail key={r.engineKey} result={r} />)}
 
-            <ChallengePanel results={data.results} />
+            <ChallengePanel results={data.results.filter((r) => STRATEGIES[r.engineKey].ftmoEligible !== false)} />
 
             {data.results
               .filter((r) => r.trades.length >= 40 && r.trades[0].features?.length)
