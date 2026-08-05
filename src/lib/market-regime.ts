@@ -107,6 +107,7 @@ export const ENGINE_REGIME_WHITELIST: Record<string, Regime[]> = {
   gold_scalping: ["range", "trend_up", "trend_down"],
   straddle_breakout: ["high_vol"],
   fibo_grid_cent: ["trend_up", "trend_down", "range"],
+  ultrascalp_fibo_adaptive: ["trend_up", "trend_down"],
 };
 
 /** true si la estrategia normalmente rinde bien en ese régimen. */

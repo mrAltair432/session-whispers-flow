@@ -50,6 +50,20 @@
       "grid": {
         "min_score": [55, 60, 65, 70]
       }
+    },
+    "ultrascalp_fibo_adaptive": {
+      "min_score": 72,
+      "required_tfs": ["H4", "H1", "M15", "M5"],
+      "trigger_tf": "M5",
+      "default_enabled": false,
+      "ftmo_eligible": false,
+      "grid": {
+        "min_score": [68, 72, 76, 80],
+        "zig_zag_atr_mult": [1.2, 1.5, 1.8],
+        "min_leg_atr": [1.8, 2.2, 2.6],
+        "sl_atr_mult": [1.8, 2.2, 2.6],
+        "tp_rr": [1.8, 2.2, 2.8]
+      }
     }
   },
   "costs": {

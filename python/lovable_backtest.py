@@ -476,6 +476,132 @@ def _round(n: float) -> float:
     return round(n * 100) / 100
 
 
+# ---- E8: UltraScalp Fibo Adaptive ------------------------------------------
+
+def _adaptive_swings(df: pd.DataFrame, mult: float) -> list[tuple[int, float, int]]:
+    if len(df) < 3:
+        return []
+    av = atr(df["high"].values, df["low"].values, df["close"].values, 14)
+    out: list[tuple[int, float, int]] = []
+    direction, ext_idx, ext_price = 1, 0, float(df.iloc[0]["high"])
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        threshold = max(float(av[i]) * mult, 0.01)
+        if direction == 1:
+            if float(row["high"]) >= ext_price:
+                ext_idx, ext_price = i, float(row["high"])
+            elif ext_price - float(row["low"]) >= threshold:
+                out.append((ext_idx, ext_price, 1))
+                direction, ext_idx, ext_price = -1, i, float(row["low"])
+        else:
+            if float(row["low"]) <= ext_price:
+                ext_idx, ext_price = i, float(row["low"])
+            elif float(row["high"]) - ext_price >= threshold:
+                out.append((ext_idx, ext_price, -1))
+                direction, ext_idx, ext_price = 1, i, float(row["high"])
+    return out
+
+
+def _structure_trend(swings: list[tuple[int, float, int]]) -> int:
+    highs = [s for s in swings if s[2] == 1][-2:]
+    lows = [s for s in swings if s[2] == -1][-2:]
+    if len(highs) < 2 or len(lows) < 2:
+        return 0
+    if highs[1][1] > highs[0][1] and lows[1][1] > lows[0][1]:
+        return 1
+    if highs[1][1] < highs[0][1] and lows[1][1] < lows[0][1]:
+        return -1
+    return 0
+
+
+def evaluate_ultrascalp_fibo_adaptive(bars: Bars, params: dict) -> dict | None:
+    h4, h1, m15, m5 = (bars.get(tf) for tf in ("H4", "H1", "M15", "M5"))
+    if any(x is None for x in (h4, h1, m15, m5)):
+        return None
+    assert h4 is not None and h1 is not None and m15 is not None and m5 is not None
+    if len(h4) < 60 or len(h1) < 80 or len(m15) < 80 or len(m5) < 80:
+        return None
+    min_score = float(params.get("minScore", params.get("min_score", 72)))
+    zz_mult = float(params.get("zigZagAtrMult", 1.2))
+    scan = int(params.get("barsToScan", 600))
+    min_leg_atr = float(params.get("minLegAtr", 2.0))
+    max_age = int(params.get("maxLegAgeBars", 10))
+    max_retrace = float(params.get("maxRetrace", 0.72))
+    fibs = params.get("fibEntries", [0.618, 0.786, 0.886])
+    tolerance_mult = float(params.get("touchToleranceAtr", 0.12))
+    sl_mult = float(params.get("slAtrMult", 1.8))
+    tp_rr = float(params.get("tpRR", 2.2))
+
+    last5 = m5.iloc[-1]
+    hour = datetime.fromtimestamp(int(last5["time"]), tz=timezone.utc).hour
+    if params.get("onlyLondonNy", True) and not 7 <= hour < 20:
+        return None
+    t4 = _structure_trend(_adaptive_swings(h4.iloc[-scan:].reset_index(drop=True), zz_mult))
+    t1 = _structure_trend(_adaptive_swings(h1.iloc[-scan:].reset_index(drop=True), zz_mult))
+    if t4 == 0 or t1 == 0 or t4 != t1:
+        return None
+    direction = t4
+    bias = "long" if direction == 1 else "short"
+
+    w15 = m15.iloc[-scan:].reset_index(drop=True)
+    av15 = atr(w15["high"].values, w15["low"].values, w15["close"].values, 14)
+    sw = _adaptive_swings(w15, zz_mult)
+    if len(sw) < 2:
+        return None
+    start, end = sw[-2], sw[-1]
+    if not ((direction == 1 and start[2] == -1 and end[2] == 1) or
+            (direction == -1 and start[2] == 1 and end[2] == -1)):
+        return None
+    leg_range = abs(end[1] - start[1])
+    a15 = float(av15[-1])
+    leg_age = len(w15) - 1 - end[0]
+    if a15 <= 0 or leg_range < min_leg_atr * a15 or leg_age > max_age:
+        return None
+    retrace = ((end[1] - float(w15.iloc[-1]["close"])) / leg_range if direction == 1
+               else (float(w15.iloc[-1]["close"]) - end[1]) / leg_range)
+    if retrace < 0 or retrace > max_retrace:
+        return None
+
+    av5 = atr(m5["high"].values, m5["low"].values, m5["close"].values, 14)
+    a5 = float(av5[-1])
+    if a5 <= 0:
+        return None
+    tolerance = a5 * tolerance_mult
+    touched = []
+    for f in fibs:
+        f = float(f)
+        if not 0 < f < 1:
+            continue
+        level = end[1] - leg_range * f if direction == 1 else end[1] + leg_range * f
+        if float(last5["low"]) <= level + tolerance and float(last5["high"]) >= level - tolerance:
+            touched.append((abs(level - float(last5["close"])), f, level))
+    if not touched:
+        return None
+    _, fib, level = min(touched)
+    rejection = (float(last5["close"]) > level and float(last5["close"]) > float(last5["open"])) if direction == 1 else \
+                (float(last5["close"]) < level and float(last5["close"]) < float(last5["open"]))
+    if not rejection:
+        return None
+
+    score = 20 + 25 + (20 if fib >= 0.786 else 16) + 10 + (10 if hour < 17 else 6) + \
+            (10 if leg_range >= min_leg_atr * a15 * 1.4 else 7) + 5
+    if score < min_score:
+        return None
+    entry = float(last5["close"]); risk = max(sl_mult * a5, a5)
+    sign = 1 if direction == 1 else -1
+    return {
+        "bias": bias, "score": score,
+        "entry": _round(entry), "stopLoss": _round(entry - sign * risk),
+        "tp1": _round(entry + sign * risk * tp_rr),
+        "tp2": _round(entry + sign * risk * tp_rr * 1.25),
+        "tp3": _round(entry + sign * risk * tp_rr * 1.5),
+        "breakdown": {"h4Trend": 20, "h1Sweep": 25, "m15Fvg": 20 if fib >= .786 else 16,
+                      "m15Bos": 10, "killzone": 10 if hour < 17 else 6,
+                      "atr": 10 if leg_range >= min_leg_atr * a15 * 1.4 else 7,
+                      "h1Alignment": 5, "total": score},
+    }
+
+
 # ---- E3: Fibo Scalping M5 ---------------------------------------------------
 
 def evaluate_fibo_scalping(bars: Bars, params: dict) -> dict | None:
@@ -1196,6 +1322,16 @@ STRATEGIES: dict[str, StrategyEngine] = {
     "straddle_breakout": StrategyEngine(
         "straddle_breakout", "Straddle Breakout M1", "M1",
         ("M1", "M5"), evaluate_straddle_breakout, {"min_score": 65}),
+    "ultrascalp_fibo_adaptive": StrategyEngine(
+        "ultrascalp_fibo_adaptive", "UltraScalp Fibo Adaptive v3", "M5",
+        ("H4", "H1", "M15", "M5"), evaluate_ultrascalp_fibo_adaptive,
+        {"minScore": 72, "zigZagAtrMult": 1.2, "barsToScan": 600,
+         "minLegAtr": 2.0, "maxLegAgeBars": 10, "maxRetrace": 0.72,
+         "fibEntries": [0.618, 0.786, 0.886], "touchToleranceAtr": 0.12,
+         "slAtrMult": 1.8, "tpRR": 2.2, "breakEvenAtR": 0.8,
+         "trailAfterR": 1.2, "trailStepAtrMult": 0.8, "maxHoldBars": 36,
+         "onlyLondonNy": True},
+        {"cooldown_bars": 12, "max_hold_bars": 36}),
 }
 
 

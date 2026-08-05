@@ -6,6 +6,7 @@ import { evaluateGoldScalping } from "./gold-scalping";
 import { evaluateEmaCrossM1 } from "./ema-cross-m1";
 import { evaluateStraddleBreakout } from "./straddle-breakout";
 import { evaluateFiboGridCent } from "./fibo-grid-cent";
+import { evaluateUltraScalpFiboAdaptive } from "./ultrascalp-fibo-adaptive";
 import type { TfKey } from "../csv-parser";
 
 export type EngineKey =
@@ -15,7 +16,8 @@ export type EngineKey =
   | "gold_scalping"
   | "ema_cross_m1"
   | "straddle_breakout"
-  | "fibo_grid_cent";
+  | "fibo_grid_cent"
+  | "ultrascalp_fibo_adaptive";
 
 export type StrategyParams = {
   minScore?: number;
@@ -37,6 +39,8 @@ export type StrategyEngine = {
   defaultEnabled?: boolean;
   // Aviso mostrado en la UI para motores de alto riesgo.
   riskNote?: string;
+  // Si es false, se omite por completo del modo FTMO y de su simulador.
+  ftmoEligible?: boolean;
   // TF que dispara la evaluación (se itera bar por bar en el backtest y
   // define la granularidad de simulación de SL/TP).
   triggerTf: TfKey;
@@ -177,9 +181,45 @@ export const STRATEGIES: Record<EngineKey, StrategyEngine> = {
     // precio respire (24 h de barras M1).
     backtestDefaults: { cooldownBars: 30, maxHoldBars: 1440 },
     defaultEnabled: false,
+    ftmoEligible: false,
     riskNote: "Alto riesgo · sólo cuenta CENT de pruebas",
     evaluate: (bars, params) =>
       evaluateFiboGridCent(bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], bars.M1, params as never),
+  },
+  ultrascalp_fibo_adaptive: {
+    key: "ultrascalp_fibo_adaptive",
+    name: "UltraScalp Fibo Adaptive v3 (experimental)",
+    shortName: "E8 · UltraScalp Fibo",
+    description:
+      "Adaptación auditada del EA v2: estructura ZigZag-ATR confirmada y alineada en H4/H1, pierna impulsiva M15 de al menos 2.2×ATR y entrada sólo tras rechazo M5 en 61.8/78.6/88.6. Corrige el prefibo inconsistente y elimina el repintado por velas abiertas. SL 2.2×ATR(M5), TP 2.2R, BE@0.8R, trailing desde 1.2R y expiración lógica de 3h. Una exposición por setup, sin martingala. Experimental, excluida de FTMO y desactivada por defecto.",
+    defaultParams: {
+      minScore: 72,
+      zigZagAtrMult: 1.2,
+      barsToScan: 600,
+      minLegAtr: 2,
+      maxLegAgeBars: 10,
+      maxRetrace: 0.72,
+      fibEntries: [0.618, 0.786, 0.886],
+      touchToleranceAtr: 0.12,
+      slAtrMult: 1.8,
+      tpRR: 2.2,
+      breakEvenAtR: 0.8,
+      trailAfterR: 1.2,
+      trailStepAtrMult: 0.8,
+      maxHoldBars: 36,
+      onlyLondonNy: true,
+    },
+    killzoneHoursUTC: [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    triggerTf: "M5",
+    requiredTfs: ["H4", "H1", "M15", "M5"],
+    backtestDefaults: { cooldownBars: 12, maxHoldBars: 36 },
+    defaultEnabled: false,
+    ftmoEligible: false,
+    riskNote: "Experimental · fuera de FTMO · requiere activación manual",
+    evaluate: (bars, params) =>
+      evaluateUltraScalpFiboAdaptive(
+        bars.H4 ?? [], bars.H1 ?? [], bars.M15 ?? [], bars.M5 ?? [], params,
+      ),
   },
 };
 

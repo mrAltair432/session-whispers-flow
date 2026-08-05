@@ -239,6 +239,9 @@ export const Route = createFileRoute("/api/public/hooks/evaluate-signals")({
             // --- #1 Modo FTMO: corta la operativa del día al acercarse al
             // límite de pérdida diaria del reto (buffer 80 %).
             const ftmo = readFtmoConfig(u as unknown as Record<string, unknown>);
+            // E7/E8 son perfiles CENT/experimentales. Aunque el usuario los
+            // active manualmente para MT5, nunca participan mientras FTMO esté activo.
+            if (ftmo.enabled && strat.ftmoEligible === false) continue;
             if (ftmoDailyBlock(ftmo, lossToday.get(u.user_id) ?? 0)) continue;
 
             // --- #6 Filtro económico por usuario (respeta su configuración)
