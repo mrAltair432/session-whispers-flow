@@ -516,7 +516,7 @@ export function simulateGridBasket(
   return { exit: lastPrice, rMultiple: realizedR, outcome, closeTime, maeR, mfeR, fills, maxOpen };
 }
 
-function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
+export function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
   const n = trades.length;
   const outcomeCounts = { tp1: 0, tp2: 0, tp3: 0, sl: 0, be: 0, timeout: 0 } as Record<BacktestTrade["outcome"], number>;
   let wins = 0, losses = 0, breakeven = 0;
