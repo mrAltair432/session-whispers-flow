@@ -473,6 +473,61 @@ function BacktestPage() {
     }
   };
 
+  // ---- FASE 1: walk-forward rodante sobre los motores seleccionados ----
+  const runRollingWalkForward = async () => {
+    setWfRollError(null);
+    setWfRollRows([]);
+    if (!hasCustom) {
+      setWfRollError("Sube un CSV (idealmente M1 de 12 meses) para correr el walk-forward.");
+      return;
+    }
+    if (!enginesSelected.length) {
+      setWfRollError("Selecciona al menos un motor.");
+      return;
+    }
+    setWfRollPending(true);
+    const rows: WfRollRow[] = [];
+    try {
+      for (const key of enginesSelected) {
+        const strat = STRATEGIES[key];
+        setWfRollCurrent(strat.shortName);
+        const missing = strat.requiredTfs.filter((tf) => !datasets[tf]?.candles.length);
+        const empty: WfWindowMetrics = {
+          trades: 0, winrate: 0, totalR: 0, expectancy: 0,
+          profitFactor: 0, maxDrawdownR: 0, sharpe: 0,
+        };
+        if (missing.length) {
+          rows.push({ engineKey: key, folds: [], oos: empty, inSample: empty, error: `Faltan TFs: ${missing.join(", ")}` });
+          setWfRollRows([...rows]);
+          continue;
+        }
+        try {
+          const resp = await worker.run<{
+            folds: WfRollFold[]; oos: WfWindowMetrics; inSample: WfWindowMetrics;
+          }>({
+            type: "walkforward",
+            h4: customH4, h1: customH1, m15: customM15, m5: customM5, m1: customM1,
+            engineKey: key,
+            trainDays, testDays,
+            excludeWeekdays,
+            autoTimeFilters,
+            costs: costsPayload,
+          });
+          rows.push({ engineKey: key, folds: resp.folds, oos: resp.oos, inSample: resp.inSample });
+        } catch (err) {
+          rows.push({
+            engineKey: key, folds: [], oos: empty, inSample: empty,
+            error: err instanceof Error ? err.message : "Error",
+          });
+        }
+        setWfRollRows([...rows]);
+      }
+    } finally {
+      setWfRollPending(false);
+      setWfRollCurrent(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="border-b border-border bg-card/50 backdrop-blur sticky top-0 z-10">
