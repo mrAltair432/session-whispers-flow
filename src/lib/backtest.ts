@@ -13,7 +13,34 @@ export type BacktestCosts = {
   slippageUsd?: number;    // deslizamiento por ejecución (default per-TF)
   commissionUsd?: number;  // comisión por lado en USD (default 0)
   latencyBars?: number;    // barras de retraso entre señal y entrada (default per-TF)
+  // Slippage EXTRA que se paga sólo cuando la ejecución es a mercado contra
+  // nosotros (stop loss, stop orders, cierres por tiempo). Los stops del oro
+  // se llenan peor que los límites. Default: 1.5× el slippage base.
+  stopSlippageUsd?: number;
+  // Modela el spread variable por sesión (Asia/rollover más caro que Londres).
+  // Default: true. Ver spreadMultiplierForHour().
+  sessionSpread?: boolean;
 };
+
+// Multiplicador de spread por hora UTC en XAUUSD retail. Calibrado sobre el
+// comportamiento típico de brokers: Londres/NY estrecho, Asia ~1.7×, y el
+// rollover diario (21-23 UTC) puede triplicarlo.
+export function spreadMultiplierForHour(hourUTC: number): number {
+  if (hourUTC >= 7 && hourUTC < 16) return 1;      // Londres + solape NY
+  if (hourUTC >= 16 && hourUTC < 20) return 1.25;  // tarde NY
+  if (hourUTC >= 20 && hourUTC < 23) return 2.5;   // rollover / cierre CME
+  return 1.7;                                       // Asia / madrugada
+}
+
+// Modelo de coste dependiente del momento de la ejecución.
+export type CostModel = {
+  perSideAt: (timeSec: number) => number; // spread/2 + slippage + comisión
+  stopExtraUsd: number;                   // extra por ejecución a mercado adversa
+};
+
+function toCostModel(c: number | CostModel): CostModel {
+  return typeof c === "number" ? { perSideAt: () => c, stopExtraUsd: 0 } : c;
+}
 
 export type BacktestOptions = {
   engineKey: EngineKey;
@@ -25,6 +52,12 @@ export type BacktestOptions = {
   excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
   autoTimeFilters?: boolean; // default true: aplica filtros de horario peligroso del oro
   costs?: BacktestCosts;
+  // Ventana temporal de EVALUACIÓN (epoch segundos). Las barras fuera del
+  // rango no generan señales, pero sí siguen disponibles como historia para
+  // los indicadores. Es la base del walk-forward: se optimiza en [trainStart,
+  // trainEnd] y se evalúa a ciegas en [testStart, testEnd].
+  startTime?: number;
+  endTime?: number;
   // Daily equity guardrails (idea portada del Fibonacci 61.8 EA, en R):
   // una vez que el PnL del día UTC alcanza `dailyTargetR` o cae por debajo
   // de `-dailyLossLimitR`, no se abren nuevas operaciones hasta el siguiente
@@ -174,7 +207,7 @@ export function simulateTrade(
   tp2: number,
   tp3: number,
   maxHoldBars: number,
-  costPerSideUsd: number,
+  costPerSideUsd: number | CostModel,
   management?: { breakEvenAtR?: number; timeStopBars?: number; trailAfterR?: number; trailStepAtrMult?: number },
   atrArr?: number[],
 ): { exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number; maeR: number; mfeR: number } {
@@ -185,9 +218,11 @@ export function simulateTrade(
   // Position allocation: 50% to TP1, 30% to TP2, 20% runner
   let realizedR = 0;
   let remaining = 1;
-  const costR = initRisk > 0 ? costPerSideUsd / initRisk : 0;
+  const cm = toCostModel(costPerSideUsd);
+  const costRAt = (t: number) => (initRisk > 0 ? cm.perSideAt(t) / initRisk : 0);
+  const stopExtraR = initRisk > 0 ? cm.stopExtraUsd / initRisk : 0;
   // Coste de la entrada (una sola vez sobre la posición completa)
-  realizedR -= costR;
+  realizedR -= costRAt(m15[entryIdx]?.time ?? 0);
   const beAtR = management?.breakEvenAtR;
   const timeStopBars = management?.timeStopBars;
   const trailAfterR = management?.trailAfterR;
@@ -210,11 +245,16 @@ export function simulateTrade(
     if (dn < maeR) maeR = dn;
   };
 
-  const closeRemaining = (price: number, time: number, outcome: BacktestTrade["outcome"]) => {
+  const closeRemaining = (
+    price: number,
+    time: number,
+    outcome: BacktestTrade["outcome"],
+    marketExit = false,
+  ) => {
     const moveR = bias === "long" ? (price - entry) / initRisk : (entry - price) / initRisk;
     realizedR += remaining * moveR;
     // Coste de cierre proporcional al tamaño que queda
-    realizedR -= remaining * costR;
+    realizedR -= remaining * (costRAt(time) + (marketExit ? stopExtraR : 0));
     remaining = 0;
     return { exit: price, rMultiple: realizedR, outcome, closeTime: time, maeR, mfeR };
   };
@@ -225,57 +265,57 @@ export function simulateTrade(
     track(c);
     // Time-stop (H): si no ha llegado a TP1 tras N barras, cierre a mercado.
     if (!tp1Hit && timeStopBars && (i - entryIdx) >= timeStopBars) {
-      return closeRemaining(c.open, c.time, "timeout");
+      return closeRemaining(c.open, c.time, "timeout", true);
     }
     if (bias === "long") {
       // Check SL first (conservative)
       if (c.low <= sl) {
-        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
+        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl", true);
         // partials already realized: TP1 secured, possibly TP2
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
-        return closeRemaining(sl, c.time, outcome);
+        return closeRemaining(sl, c.time, outcome, true);
       }
       if (!tp1Hit && c.high >= tp1) {
         realizedR += 0.5 * 1;
-        realizedR -= 0.5 * costR; // coste del parcial 50%
+        realizedR -= 0.5 * costRAt(c.time); // coste del parcial 50%
         remaining -= 0.5;
         sl = entry; // move to BE
         tp1Hit = true;
       }
       if (tp1Hit && !tp2Hit && c.high >= tp2) {
         realizedR += 0.3 * 2;
-        realizedR -= 0.3 * costR; // coste del parcial 30%
+        realizedR -= 0.3 * costRAt(c.time); // coste del parcial 30%
         remaining -= 0.3;
         tp2Hit = true;
       }
       if (tp2Hit && c.high >= tp3) {
         realizedR += 0.2 * 3;
-        realizedR -= 0.2 * costR; // coste del cierre runner
+        realizedR -= 0.2 * costRAt(c.time); // coste del cierre runner
         remaining = 0;
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
       }
     } else {
       if (c.high >= sl) {
-        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
+        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl", true);
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
-        return closeRemaining(sl, c.time, outcome);
+        return closeRemaining(sl, c.time, outcome, true);
       }
       if (!tp1Hit && c.low <= tp1) {
         realizedR += 0.5 * 1;
-        realizedR -= 0.5 * costR;
+        realizedR -= 0.5 * costRAt(c.time);
         remaining -= 0.5;
         sl = entry;
         tp1Hit = true;
       }
       if (tp1Hit && !tp2Hit && c.low <= tp2) {
         realizedR += 0.3 * 2;
-        realizedR -= 0.3 * costR;
+        realizedR -= 0.3 * costRAt(c.time);
         remaining -= 0.3;
         tp2Hit = true;
       }
       if (tp2Hit && c.low <= tp3) {
         realizedR += 0.2 * 3;
-        realizedR -= 0.2 * costR;
+        realizedR -= 0.2 * costRAt(c.time);
         remaining = 0;
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
       }
@@ -313,7 +353,7 @@ export function simulateTrade(
   }
   // Timeout: close at last close
   const last = m15[end];
-  return closeRemaining(last.close, last.time, "timeout");
+  return closeRemaining(last.close, last.time, "timeout", true);
 }
 
 // ---------------------------------------------------------------------------
@@ -339,7 +379,7 @@ export function simulateGridBasket(
   startIdx: number,
   plan: GridPlan,
   maxHoldBars: number,
-  costPerSideUsd: number,
+  costPerSideUsd: number | CostModel,
   management?: { breakEvenAtR?: number; trailAfterR?: number; trailStepAtrMult?: number },
   atrArr?: number[],
 ): {
@@ -351,7 +391,9 @@ export function simulateGridBasket(
     const c = bars[startIdx];
     return { exit: c.close, rMultiple: 0, outcome: "timeout", closeTime: c.time, maeR: 0, mfeR: 0, fills: 0, maxOpen: 0 };
   }
-  const costR = costPerSideUsd / risk;
+  const cm = toCostModel(costPerSideUsd);
+  const costRAt = (t: number) => cm.perSideAt(t) / risk;
+  const stopExtraR = cm.stopExtraUsd / risk;
   const maxOpenAllowed = plan.maxOpenPositions ?? plan.orders.length + 1;
   const expireIdx = startIdx + (plan.expireBars ?? maxHoldBars);
 
@@ -365,7 +407,7 @@ export function simulateGridBasket(
   let lastPrice = bars[startIdx].close;
   let closeTime = bars[startIdx].time;
 
-  const openPosition = (side: "long" | "short", price: number) => {
+  const openPosition = (side: "long" | "short", price: number, time: number, marketFill = false) => {
     if (open.length >= maxOpenAllowed) return;
     open.push({
       side,
@@ -376,19 +418,19 @@ export function simulateGridBasket(
       best: price,
     });
     fills += 1;
-    realizedR -= costR; // coste de apertura
+    realizedR -= costRAt(time) + (marketFill ? stopExtraR : 0); // coste de apertura
     if (open.length > maxOpen) maxOpen = open.length;
   };
 
   if (plan.includeMarketEntry) {
     const first = bars[Math.min(startIdx + 1, bars.length - 1)];
-    openPosition(plan.orders[0]?.side ?? "long", first.open);
+    openPosition(plan.orders[0]?.side ?? "long", first.open, first.time, true);
   }
 
-  const closePosition = (idx: number, price: number) => {
+  const closePosition = (idx: number, price: number, time: number, marketExit = false) => {
     const p = open[idx];
     const moveR = p.side === "long" ? (price - p.entry) / risk : (p.entry - price) / risk;
-    realizedR += moveR - costR;
+    realizedR += moveR - costRAt(time) - (marketExit ? stopExtraR : 0);
     open.splice(idx, 1);
   };
 
@@ -408,7 +450,8 @@ export function simulateGridBasket(
             : o.kind === "limit" ? c.high >= o.price : c.low <= o.price;
         if (hit) {
           o.filled = true;
-          openPosition(o.side, o.price);
+          // Las STOP se llenan a mercado: pagan slippage extra. Las LIMIT no.
+          openPosition(o.side, o.price, c.time, o.kind === "stop");
         }
       }
     }
@@ -429,9 +472,9 @@ export function simulateGridBasket(
     for (let k = open.length - 1; k >= 0; k--) {
       const p = open[k];
       const slHit = p.side === "long" ? c.low <= p.sl : c.high >= p.sl;
-      if (slHit) { closePosition(k, p.sl); continue; }
+      if (slHit) { closePosition(k, p.sl, c.time, true); continue; }
       const tpHit = p.side === "long" ? c.high >= p.tp : c.low <= p.tp;
-      if (tpHit) { closePosition(k, p.tp); }
+      if (tpHit) { closePosition(k, p.tp, c.time); }
     }
 
     // 4) Gestión por posición (BE + trailing escalonado) al cierre de la vela
@@ -466,14 +509,14 @@ export function simulateGridBasket(
   }
 
   // Cierre forzado del remanente a mercado
-  for (let k = open.length - 1; k >= 0; k--) closePosition(k, lastPrice);
+  for (let k = open.length - 1; k >= 0; k--) closePosition(k, lastPrice, closeTime, true);
 
   const outcome: BacktestTrade["outcome"] =
     realizedR > 0.05 ? "tp1" : realizedR < -0.05 ? "sl" : "be";
   return { exit: lastPrice, rMultiple: realizedR, outcome, closeTime, maeR, mfeR, fills, maxOpen };
 }
 
-function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
+export function computeMetrics(trades: BacktestTrade[]): BacktestMetrics {
   const n = trades.length;
   const outcomeCounts = { tp1: 0, tp2: 0, tp3: 0, sl: 0, be: 0, timeout: 0 } as Record<BacktestTrade["outcome"], number>;
   let wins = 0, losses = 0, breakeven = 0;
@@ -578,18 +621,32 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const d = new Date(t * 1000);
     return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
   };
-  // Defaults de costos por TF trigger. Oro retail M1: spread ~0.20 USD,
-  // slippage ~0.05 USD, latencia 1 barra (60s) señal→ejecución.
-  const costDefaults: BacktestCosts = triggerTf === "M1"
-    ? { spreadUsd: 0.20, slippageUsd: 0.05, commissionUsd: 0, latencyBars: 1 }
-    : { spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0 };
+  // FASE 0 — costes honestos: se aplican en TODOS los timeframes, no sólo M1.
+  // Antes, los motores M15 (E1/E2) se simulaban con spread 0, lo que inflaba
+  // su edge. Oro retail: spread ~0.20 USD, slippage ~0.05 USD por lado.
+  // La latencia sí depende del TF: 1 barra M1 = 60s (realista), pero 1 barra
+  // M15 serían 15 min, así que el caller (worker) ya la escala.
   const costs: Required<BacktestCosts> = {
-    spreadUsd: opts.costs?.spreadUsd ?? costDefaults.spreadUsd ?? 0,
-    slippageUsd: opts.costs?.slippageUsd ?? costDefaults.slippageUsd ?? 0,
-    commissionUsd: opts.costs?.commissionUsd ?? costDefaults.commissionUsd ?? 0,
-    latencyBars: opts.costs?.latencyBars ?? costDefaults.latencyBars ?? 0,
+    spreadUsd: opts.costs?.spreadUsd ?? 0.20,
+    slippageUsd: opts.costs?.slippageUsd ?? 0.05,
+    commissionUsd: opts.costs?.commissionUsd ?? 0,
+    latencyBars: opts.costs?.latencyBars ?? (triggerTf === "M1" ? 1 : 0),
+    stopSlippageUsd: opts.costs?.stopSlippageUsd ?? (opts.costs?.slippageUsd ?? 0.05) * 1.5,
+    sessionSpread: opts.costs?.sessionSpread ?? true,
   };
-  const costPerSideUsd = costs.spreadUsd / 2 + costs.slippageUsd + costs.commissionUsd;
+  const baseHalfSpread = costs.spreadUsd / 2;
+  const flatPerSide = costs.slippageUsd + costs.commissionUsd;
+  const costModel: CostModel = {
+    perSideAt: (timeSec: number) => {
+      const mult = costs.sessionSpread
+        ? spreadMultiplierForHour(new Date(timeSec * 1000).getUTCHours())
+        : 1;
+      return baseHalfSpread * mult + flatPerSide;
+    },
+    stopExtraUsd: costs.stopSlippageUsd,
+  };
+  const startTime = opts.startTime;
+  const endTime = opts.endTime;
   const trades: BacktestTrade[] = [];
 
   // Pre-computar los otros TFs necesarios (excluyendo el trigger).
@@ -615,6 +672,8 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     }
     if (i - lastExitIdx < cooldown) continue;
     const barTime = triggerBars[i].time;
+    if (endTime != null && barTime > endTime) break;
+    if (startTime != null && barTime < startTime) continue;
     const d0 = new Date(barTime * 1000);
     if (autoFilters && isMarketClosedOrRisky(d0)) continue;
     if (opts.excludeHours?.includes(d0.getUTCHours())) continue;
@@ -651,7 +710,7 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     // --- Motores tipo grid: se simula el cesto completo -------------------
     if (signal.grid && signal.grid.orders.length) {
       const gsim = simulateGridBasket(
-        triggerBars, entryBarIdx, signal.grid, maxHold, costPerSideUsd, signal.management, triggerAtr,
+        triggerBars, entryBarIdx, signal.grid, maxHold, costModel, signal.management, triggerAtr,
       );
       const dg = new Date(entryBar.time * 1000);
       const dkg = dayKey(entryBar.time);
@@ -699,7 +758,7 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const tp2 = signal.bias === "long" ? entry + dist * r2 : entry - dist * r2;
     const tp3 = signal.bias === "long" ? entry + dist * r3 : entry - dist * r3;
 
-    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd, signal.management, triggerAtr);
+    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costModel, signal.management, triggerAtr);
     const de = new Date(entryBar.time * 1000);
     const hourUTC = de.getUTCHours();
     const weekday = de.getUTCDay();

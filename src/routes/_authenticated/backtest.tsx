@@ -62,6 +62,27 @@ type WfResult = {
 };
 
 type SavedConfig = { minScore: number; excludeHours: number[]; savedAt: number };
+
+// Fase 1 — walk-forward rodante (varias ventanas train→test encadenadas).
+type WfRollFold = {
+  trainStart: number; trainEnd: number; testEnd: number; minScore: number;
+  train: WfWindowMetrics; test: WfWindowMetrics;
+};
+type WfRollRow = {
+  engineKey: EngineKey;
+  folds: WfRollFold[];
+  oos: WfWindowMetrics;
+  inSample: WfWindowMetrics;
+  error?: string;
+};
+function wfVerdict(r: WfRollRow): { label: string; cls: string } {
+  if (r.error) return { label: "ERROR", cls: "bg-muted text-muted-foreground" };
+  if (r.oos.trades >= 100 && r.oos.profitFactor >= 1.25)
+    return { label: "PASA", cls: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" };
+  if (r.oos.trades >= 30 && r.oos.profitFactor >= 1.05)
+    return { label: "DUDOSO", cls: "bg-amber-500/20 text-amber-300 border border-amber-500/40" };
+  return { label: "DESCARTAR", cls: "bg-red-500/20 text-red-300 border border-red-500/40" };
+}
 const CONFIG_KEY = "tc.backtest.appliedConfig.v1";
 function loadSavedConfigs(): Partial<Record<EngineKey, SavedConfig>> {
   if (typeof window === "undefined") return {};
@@ -125,9 +146,16 @@ function BacktestPage() {
   const [slippageUsd, setSlippageUsd] = useState(0.05);
   const [commissionUsd, setCommissionUsd] = useState(0);
   const [latencyBars, setLatencyBars] = useState(1);
+  // Fase 0: slippage extra en ejecuciones a mercado (SL, stops, time-stop) y
+  // spread variable por sesión (Asia/rollover más caro que Londres).
+  const [stopSlippageUsd, setStopSlippageUsd] = useState(0.08);
+  const [sessionSpread, setSessionSpread] = useState(true);
   const costsPayload = costsEnabled
-    ? { spreadUsd, slippageUsd, commissionUsd, latencyBars }
-    : { spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0 };
+    ? { spreadUsd, slippageUsd, commissionUsd, latencyBars, stopSlippageUsd, sessionSpread }
+    : {
+        spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0,
+        stopSlippageUsd: 0, sessionSpread: false,
+      };
   const [datasets, setDatasets] = useState<Record<TfKey, CustomData | undefined>>(
     {} as Record<TfKey, CustomData | undefined>,
   );
@@ -148,6 +176,13 @@ function BacktestPage() {
   const [wfPending, setWfPending] = useState(false);
   const [wfError, setWfError] = useState<string | null>(null);
   const [wfResult, setWfResult] = useState<WfResult | null>(null);
+  // Fase 1 — walk-forward rodante sobre todos los motores seleccionados.
+  const [trainDays, setTrainDays] = useState(180);
+  const [testDays, setTestDays] = useState(60);
+  const [wfRollPending, setWfRollPending] = useState(false);
+  const [wfRollCurrent, setWfRollCurrent] = useState<string | null>(null);
+  const [wfRollRows, setWfRollRows] = useState<WfRollRow[]>([]);
+  const [wfRollError, setWfRollError] = useState<string | null>(null);
 
   // Al cambiar de estrategia a optimizar, precargar su config guardada (si existe)
   // en los controles superiores para que el próximo backtest la use.
@@ -435,6 +470,61 @@ function BacktestPage() {
     } finally {
       setWfPending(false);
       setWfPhase("idle");
+    }
+  };
+
+  // ---- FASE 1: walk-forward rodante sobre los motores seleccionados ----
+  const runRollingWalkForward = async () => {
+    setWfRollError(null);
+    setWfRollRows([]);
+    if (!hasCustom) {
+      setWfRollError("Sube un CSV (idealmente M1 de 12 meses) para correr el walk-forward.");
+      return;
+    }
+    if (!enginesSelected.length) {
+      setWfRollError("Selecciona al menos un motor.");
+      return;
+    }
+    setWfRollPending(true);
+    const rows: WfRollRow[] = [];
+    try {
+      for (const key of enginesSelected) {
+        const strat = STRATEGIES[key];
+        setWfRollCurrent(strat.shortName);
+        const missing = strat.requiredTfs.filter((tf) => !datasets[tf]?.candles.length);
+        const empty: WfWindowMetrics = {
+          trades: 0, winrate: 0, totalR: 0, expectancy: 0,
+          profitFactor: 0, maxDrawdownR: 0, sharpe: 0,
+        };
+        if (missing.length) {
+          rows.push({ engineKey: key, folds: [], oos: empty, inSample: empty, error: `Faltan TFs: ${missing.join(", ")}` });
+          setWfRollRows([...rows]);
+          continue;
+        }
+        try {
+          const resp = await worker.run<{
+            folds: WfRollFold[]; oos: WfWindowMetrics; inSample: WfWindowMetrics;
+          }>({
+            type: "walkforward",
+            h4: customH4, h1: customH1, m15: customM15, m5: customM5, m1: customM1,
+            engineKey: key,
+            trainDays, testDays,
+            excludeWeekdays,
+            autoTimeFilters,
+            costs: costsPayload,
+          });
+          rows.push({ engineKey: key, folds: resp.folds, oos: resp.oos, inSample: resp.inSample });
+        } catch (err) {
+          rows.push({
+            engineKey: key, folds: [], oos: empty, inSample: empty,
+            error: err instanceof Error ? err.message : "Error",
+          });
+        }
+        setWfRollRows([...rows]);
+      }
+    } finally {
+      setWfRollPending(false);
+      setWfRollCurrent(null);
     }
   };
 
@@ -770,11 +860,13 @@ function BacktestPage() {
                 checked={costsEnabled}
                 onChange={(e) => setCostsEnabled(e.target.checked)}
               />
-              Simular costos de ejecución
+              Simular costos de ejecución (Fase 0)
             </label>
             <p className="text-xs text-muted-foreground">
-              Se aplica únicamente a estrategias M1. E1/E2 M15 conservan la ejecución calibrada de su versión optimizada. Coste por lado = <span className="font-mono">spread/2 + slippage + comisión</span>.
-              Se descuenta en cada fill (entrada + parciales + cierre).
+              Se aplica a <strong>todos</strong> los motores (antes los M15 corrían con spread 0 e inflaban su edge).
+              Coste por lado = <span className="font-mono">spread/2 × mult. sesión + slippage + comisión</span>, descontado en cada fill
+              (entrada + parciales + cierre). Las ejecuciones a mercado (SL, órdenes stop, time-stop) pagan además el slippage de stop.
+              La latencia sólo se aplica a motores M1; en TFs mayores la entrada es la apertura de la barra siguiente.
             </p>
           </div>
           <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 ${costsEnabled ? "" : "opacity-50 pointer-events-none"}`}>
@@ -811,12 +903,164 @@ function BacktestPage() {
               />
             </label>
           </div>
+          <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 ${costsEnabled ? "" : "opacity-50 pointer-events-none"}`}>
+            <label className="text-xs space-y-1">
+              <div className="text-muted-foreground">Slippage extra en stops (USD)</div>
+              <input
+                type="number" step="0.01" min="0" value={stopSlippageUsd}
+                onChange={(e) => setStopSlippageUsd(Math.max(0, Number(e.target.value) || 0))}
+                className="w-full px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs md:mt-5 cursor-pointer">
+              <input type="checkbox" checked={sessionSpread} onChange={(e) => setSessionSpread(e.target.checked)} />
+              <span className="text-muted-foreground">
+                Spread variable por sesión (Londres/NY ×1 · tarde NY ×1.25 · rollover 20-23 UTC ×2.5 · Asia ×1.7)
+              </span>
+            </label>
+          </div>
           {costsEnabled && (
             <p className="text-xs text-muted-foreground">
               Coste por lado actual: <span className="font-mono text-foreground">{(spreadUsd/2 + slippageUsd + commissionUsd).toFixed(3)} USD</span>
               {" "}· Ida y vuelta simple: <span className="font-mono text-foreground">{(spreadUsd + 2*slippageUsd + 2*commissionUsd).toFixed(3)} USD</span>
               {" "}· Latencia: <span className="font-mono text-foreground">{latencyBars}</span> {latencyBars === 1 ? "barra" : "barras"} tras la señal
             </p>
+          )}
+        </section>
+
+        {/* FASE 1 · Walk-forward rodante */}
+        <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Split className="w-4 h-4 text-primary" />
+              <h3 className="font-semibold">Walk-forward rodante (Fase 1)</h3>
+            </div>
+            <div className="flex items-end gap-3">
+              <label className="text-xs space-y-1">
+                <div className="text-muted-foreground">Train (días)</div>
+                <input
+                  type="number" min={30} step={15} value={trainDays}
+                  onChange={(e) => setTrainDays(Math.max(30, Number(e.target.value) || 30))}
+                  className="w-24 px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+                />
+              </label>
+              <label className="text-xs space-y-1">
+                <div className="text-muted-foreground">Test OOS (días)</div>
+                <input
+                  type="number" min={7} step={7} value={testDays}
+                  onChange={(e) => setTestDays(Math.max(7, Number(e.target.value) || 7))}
+                  className="w-24 px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+                />
+              </label>
+              <Button size="sm" onClick={runRollingWalkForward} disabled={wfRollPending || m.isPending || o.isPending}>
+                {wfRollPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
+                {wfRollPending ? "Corriendo..." : "Correr walk-forward"}
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Optimiza <span className="font-mono">minScore</span> en cada ventana de train y evalúa a ciegas en la ventana
+            siguiente, avanzando en el tiempo. <strong>Sólo cuenta el resultado OOS</strong>: es el único número que no
+            está contaminado por la propia optimización. Criterio de supervivencia: <span className="font-mono">PF ≥ 1.25</span> y
+            <span className="font-mono"> ≥ 100 trades</span> fuera de muestra.
+          </p>
+          {wfRollCurrent && (
+            <p className="text-xs text-primary">Evaluando {wfRollCurrent}…</p>
+          )}
+          {wfRollError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">{wfRollError}</div>
+          )}
+          {wfRollRows.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-muted-foreground border-b border-border">
+                  <tr>
+                    <th className="text-left py-2">Motor</th>
+                    <th className="text-right">Folds</th>
+                    <th className="text-right">Trades OOS</th>
+                    <th className="text-right">WR OOS</th>
+                    <th className="text-right">Total R OOS</th>
+                    <th className="text-right">PF OOS</th>
+                    <th className="text-right">Max DD OOS</th>
+                    <th className="text-right">PF in-sample</th>
+                    <th className="text-right">Degradación</th>
+                    <th className="text-right">Veredicto</th>
+                  </tr>
+                </thead>
+                <tbody className="font-mono">
+                  {wfRollRows.map((r) => {
+                    const v = wfVerdict(r);
+                    const degr = r.inSample.profitFactor > 0
+                      ? (1 - r.oos.profitFactor / r.inSample.profitFactor) * 100
+                      : 0;
+                    return (
+                      <tr key={r.engineKey} className="border-b border-border/50">
+                        <td className="py-2 font-sans">{STRATEGIES[r.engineKey].shortName}</td>
+                        {r.error ? (
+                          <td colSpan={8} className="text-right text-xs text-muted-foreground font-sans">{r.error}</td>
+                        ) : (
+                          <>
+                            <td className="text-right">{r.folds.length}</td>
+                            <td className="text-right">{r.oos.trades}</td>
+                            <td className="text-right">{(r.oos.winrate * 100).toFixed(1)}%</td>
+                            <td className={`text-right ${r.oos.totalR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              {r.oos.totalR >= 0 ? "+" : ""}{r.oos.totalR.toFixed(1)}R
+                            </td>
+                            <td className={`text-right ${r.oos.profitFactor >= 1.25 ? "text-emerald-400" : "text-red-400"}`}>
+                              {r.oos.profitFactor.toFixed(2)}
+                            </td>
+                            <td className="text-right">{r.oos.maxDrawdownR.toFixed(1)}R</td>
+                            <td className="text-right text-muted-foreground">{r.inSample.profitFactor.toFixed(2)}</td>
+                            <td className="text-right text-muted-foreground">{degr > 0 ? `−${degr.toFixed(0)}%` : "—"}</td>
+                          </>
+                        )}
+                        <td className="text-right">
+                          <span className={`px-2 py-0.5 rounded text-xs font-sans ${v.cls}`}>{v.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {wfRollRows.some((r) => r.folds.length > 0) && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground">Ver detalle por ventana</summary>
+              <div className="mt-2 space-y-3">
+                {wfRollRows.filter((r) => r.folds.length).map((r) => (
+                  <div key={r.engineKey}>
+                    <div className="font-medium mb-1">{STRATEGIES[r.engineKey].shortName}</div>
+                    <table className="w-full font-mono">
+                      <thead className="text-muted-foreground">
+                        <tr>
+                          <th className="text-left">Ventana OOS</th>
+                          <th className="text-right">minScore</th>
+                          <th className="text-right">Trades</th>
+                          <th className="text-right">R</th>
+                          <th className="text-right">PF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {r.folds.map((f, i) => (
+                          <tr key={i} className="border-b border-border/30">
+                            <td className="text-left">
+                              {new Date(f.trainEnd * 1000).toISOString().slice(0, 10)} → {new Date(f.testEnd * 1000).toISOString().slice(0, 10)}
+                            </td>
+                            <td className="text-right">{f.minScore}</td>
+                            <td className="text-right">{f.test.trades}</td>
+                            <td className={`text-right ${f.test.totalR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              {f.test.totalR >= 0 ? "+" : ""}{f.test.totalR.toFixed(1)}
+                            </td>
+                            <td className="text-right">{f.test.profitFactor.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </details>
           )}
         </section>
 
