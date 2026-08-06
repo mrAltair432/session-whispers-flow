@@ -231,6 +231,108 @@ self.onmessage = (e: MessageEvent<Job>) => {
       (self as unknown as Worker).postMessage({
         id: job.id, done: true, worstHours, keepOnlyPositive,
       });
+    } else if (job.type === "walkforward") {
+      const bars = toBars(job);
+      const strat = STRATEGIES[job.engineKey];
+      const triggerBars = bars[strat.triggerTf] ?? [];
+      if (triggerBars.length < 200) throw new Error("Historial insuficiente para walk-forward.");
+      const t0 = triggerBars[0].time;
+      const tEnd = triggerBars[triggerBars.length - 1].time;
+      const trainSec = job.trainDays * DAY;
+      const testSec = job.testDays * DAY;
+      if (tEnd - t0 < trainSec + testSec) {
+        throw new Error(
+          `Se necesitan al menos ${job.trainDays + job.testDays} días de historial (hay ${Math.floor((tEnd - t0) / DAY)}).`,
+        );
+      }
+      const base = (strat.defaultParams.minScore as number | undefined) ?? 70;
+      const grid = Array.from(new Set([
+        Math.max(45, base - 15), Math.max(45, base - 10), Math.max(45, base - 5),
+        base,
+        Math.min(95, base + 5), Math.min(95, base + 10),
+      ])).sort((a, b) => a - b);
+
+      const windows: Array<{ trainStart: number; trainEnd: number; testEnd: number }> = [];
+      for (let s = t0; s + trainSec + testSec <= tEnd; s += testSec) {
+        windows.push({ trainStart: s, trainEnd: s + trainSec, testEnd: s + trainSec + testSec });
+      }
+      const total = windows.length * (grid.length + 1);
+      let step = 0;
+      const jobStartedAt = Date.now();
+      const report = (label: string) => {
+        (self as unknown as Worker).postMessage({
+          id: job.id,
+          progress: { step, total, label, phase: "simulate", percent: total ? step / total : 0, jobStartedAt },
+        });
+      };
+
+      const folds: Array<{
+        trainStart: number; trainEnd: number; testEnd: number;
+        minScore: number;
+        train: ReturnType<typeof summarize>;
+        test: ReturnType<typeof summarize>;
+      }> = [];
+      const oosTrades: BacktestTrade[] = [];
+      const isTrades: BacktestTrade[] = [];
+
+      for (let w = 0; w < windows.length; w++) {
+        const win = windows[w];
+        let best: { minScore: number; score: number; res: BacktestResult } | null = null;
+        for (const ms of grid) {
+          report(`Fold ${w + 1}/${windows.length} · train minScore=${ms}`);
+          step++;
+          const r = runBacktestBars(bars, {
+            engineKey: job.engineKey,
+            params: { minScore: ms },
+            excludeWeekdays: job.excludeWeekdays,
+            autoTimeFilters: job.autoTimeFilters,
+            costs: costsForEngine(job.engineKey, job.costs),
+            startTime: win.trainStart,
+            endTime: win.trainEnd,
+          });
+          const mm = r.metrics;
+          // Selección honesta: exige muestra mínima y penaliza el drawdown.
+          const sc = mm.trades >= 8 ? mm.expectancy - 0.05 * mm.maxDrawdownR : -Infinity;
+          if (!best || sc > best.score) best = { minScore: ms, score: sc, res: r };
+        }
+        const chosen = best && isFinite(best.score) ? best : null;
+        const minScore = chosen?.minScore ?? base;
+        const trainRes = chosen?.res ?? best!.res;
+        report(`Fold ${w + 1}/${windows.length} · test OOS`);
+        step++;
+        const testRes = runBacktestBars(bars, {
+          engineKey: job.engineKey,
+          params: { minScore },
+          excludeWeekdays: job.excludeWeekdays,
+          autoTimeFilters: job.autoTimeFilters,
+          costs: costsForEngine(job.engineKey, job.costs),
+          startTime: win.trainEnd,
+          endTime: win.testEnd,
+        });
+        oosTrades.push(...testRes.trades);
+        isTrades.push(...trainRes.trades);
+        folds.push({
+          trainStart: win.trainStart,
+          trainEnd: win.trainEnd,
+          testEnd: win.testEnd,
+          minScore,
+          train: summarize(trainRes.metrics),
+          test: summarize(testRes.metrics),
+        });
+      }
+
+      oosTrades.sort((a, b) => a.openTime - b.openTime);
+      const oos = computeMetrics(oosTrades);
+      const is = computeMetrics(isTrades);
+      (self as unknown as Worker).postMessage({
+        id: job.id,
+        done: true,
+        engineKey: job.engineKey,
+        folds,
+        oos: summarize(oos),
+        inSample: summarize(is),
+        equityCurve: oos.equityCurve,
+      });
     } else if (job.type === "optimize-one") {
       const r = runBacktestBars(toBars(job), {
         engineKey: job.engineKey,
