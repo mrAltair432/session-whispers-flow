@@ -621,18 +621,32 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const d = new Date(t * 1000);
     return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
   };
-  // Defaults de costos por TF trigger. Oro retail M1: spread ~0.20 USD,
-  // slippage ~0.05 USD, latencia 1 barra (60s) señal→ejecución.
-  const costDefaults: BacktestCosts = triggerTf === "M1"
-    ? { spreadUsd: 0.20, slippageUsd: 0.05, commissionUsd: 0, latencyBars: 1 }
-    : { spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0 };
+  // FASE 0 — costes honestos: se aplican en TODOS los timeframes, no sólo M1.
+  // Antes, los motores M15 (E1/E2) se simulaban con spread 0, lo que inflaba
+  // su edge. Oro retail: spread ~0.20 USD, slippage ~0.05 USD por lado.
+  // La latencia sí depende del TF: 1 barra M1 = 60s (realista), pero 1 barra
+  // M15 serían 15 min, así que el caller (worker) ya la escala.
   const costs: Required<BacktestCosts> = {
-    spreadUsd: opts.costs?.spreadUsd ?? costDefaults.spreadUsd ?? 0,
-    slippageUsd: opts.costs?.slippageUsd ?? costDefaults.slippageUsd ?? 0,
-    commissionUsd: opts.costs?.commissionUsd ?? costDefaults.commissionUsd ?? 0,
-    latencyBars: opts.costs?.latencyBars ?? costDefaults.latencyBars ?? 0,
+    spreadUsd: opts.costs?.spreadUsd ?? 0.20,
+    slippageUsd: opts.costs?.slippageUsd ?? 0.05,
+    commissionUsd: opts.costs?.commissionUsd ?? 0,
+    latencyBars: opts.costs?.latencyBars ?? (triggerTf === "M1" ? 1 : 0),
+    stopSlippageUsd: opts.costs?.stopSlippageUsd ?? (opts.costs?.slippageUsd ?? 0.05) * 1.5,
+    sessionSpread: opts.costs?.sessionSpread ?? true,
   };
-  const costPerSideUsd = costs.spreadUsd / 2 + costs.slippageUsd + costs.commissionUsd;
+  const baseHalfSpread = costs.spreadUsd / 2;
+  const flatPerSide = costs.slippageUsd + costs.commissionUsd;
+  const costModel: CostModel = {
+    perSideAt: (timeSec: number) => {
+      const mult = costs.sessionSpread
+        ? spreadMultiplierForHour(new Date(timeSec * 1000).getUTCHours())
+        : 1;
+      return baseHalfSpread * mult + flatPerSide;
+    },
+    stopExtraUsd: costs.stopSlippageUsd,
+  };
+  const startTime = opts.startTime;
+  const endTime = opts.endTime;
   const trades: BacktestTrade[] = [];
 
   // Pre-computar los otros TFs necesarios (excluyendo el trigger).
@@ -658,6 +672,8 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     }
     if (i - lastExitIdx < cooldown) continue;
     const barTime = triggerBars[i].time;
+    if (endTime != null && barTime > endTime) break;
+    if (startTime != null && barTime < startTime) continue;
     const d0 = new Date(barTime * 1000);
     if (autoFilters && isMarketClosedOrRisky(d0)) continue;
     if (opts.excludeHours?.includes(d0.getUTCHours())) continue;
@@ -694,7 +710,7 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     // --- Motores tipo grid: se simula el cesto completo -------------------
     if (signal.grid && signal.grid.orders.length) {
       const gsim = simulateGridBasket(
-        triggerBars, entryBarIdx, signal.grid, maxHold, costPerSideUsd, signal.management, triggerAtr,
+        triggerBars, entryBarIdx, signal.grid, maxHold, costModel, signal.management, triggerAtr,
       );
       const dg = new Date(entryBar.time * 1000);
       const dkg = dayKey(entryBar.time);
@@ -742,7 +758,7 @@ export function runBacktestBars(bars: Bars, opts: BacktestOptions): BacktestResu
     const tp2 = signal.bias === "long" ? entry + dist * r2 : entry - dist * r2;
     const tp3 = signal.bias === "long" ? entry + dist * r3 : entry - dist * r3;
 
-    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costPerSideUsd, signal.management, triggerAtr);
+    const sim = simulateTrade(triggerBars, entryBarIdx, signal.bias, entry, sl, tp1, tp2, tp3, maxHold, costModel, signal.management, triggerAtr);
     const de = new Date(entryBar.time * 1000);
     const hourUTC = de.getUTCHours();
     const weekday = de.getUTCDay();
