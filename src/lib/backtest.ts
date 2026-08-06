@@ -13,7 +13,34 @@ export type BacktestCosts = {
   slippageUsd?: number;    // deslizamiento por ejecución (default per-TF)
   commissionUsd?: number;  // comisión por lado en USD (default 0)
   latencyBars?: number;    // barras de retraso entre señal y entrada (default per-TF)
+  // Slippage EXTRA que se paga sólo cuando la ejecución es a mercado contra
+  // nosotros (stop loss, stop orders, cierres por tiempo). Los stops del oro
+  // se llenan peor que los límites. Default: 1.5× el slippage base.
+  stopSlippageUsd?: number;
+  // Modela el spread variable por sesión (Asia/rollover más caro que Londres).
+  // Default: true. Ver spreadMultiplierForHour().
+  sessionSpread?: boolean;
 };
+
+// Multiplicador de spread por hora UTC en XAUUSD retail. Calibrado sobre el
+// comportamiento típico de brokers: Londres/NY estrecho, Asia ~1.7×, y el
+// rollover diario (21-23 UTC) puede triplicarlo.
+export function spreadMultiplierForHour(hourUTC: number): number {
+  if (hourUTC >= 7 && hourUTC < 16) return 1;      // Londres + solape NY
+  if (hourUTC >= 16 && hourUTC < 20) return 1.25;  // tarde NY
+  if (hourUTC >= 20 && hourUTC < 23) return 2.5;   // rollover / cierre CME
+  return 1.7;                                       // Asia / madrugada
+}
+
+// Modelo de coste dependiente del momento de la ejecución.
+export type CostModel = {
+  perSideAt: (timeSec: number) => number; // spread/2 + slippage + comisión
+  stopExtraUsd: number;                   // extra por ejecución a mercado adversa
+};
+
+function toCostModel(c: number | CostModel): CostModel {
+  return typeof c === "number" ? { perSideAt: () => c, stopExtraUsd: 0 } : c;
+}
 
 export type BacktestOptions = {
   engineKey: EngineKey;
@@ -25,6 +52,12 @@ export type BacktestOptions = {
   excludeWeekdays?: number[]; // 0=Sun..6=Sat to skip
   autoTimeFilters?: boolean; // default true: aplica filtros de horario peligroso del oro
   costs?: BacktestCosts;
+  // Ventana temporal de EVALUACIÓN (epoch segundos). Las barras fuera del
+  // rango no generan señales, pero sí siguen disponibles como historia para
+  // los indicadores. Es la base del walk-forward: se optimiza en [trainStart,
+  // trainEnd] y se evalúa a ciegas en [testStart, testEnd].
+  startTime?: number;
+  endTime?: number;
   // Daily equity guardrails (idea portada del Fibonacci 61.8 EA, en R):
   // una vez que el PnL del día UTC alcanza `dailyTargetR` o cae por debajo
   // de `-dailyLossLimitR`, no se abren nuevas operaciones hasta el siguiente
