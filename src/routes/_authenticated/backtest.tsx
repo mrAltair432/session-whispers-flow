@@ -860,11 +860,13 @@ function BacktestPage() {
                 checked={costsEnabled}
                 onChange={(e) => setCostsEnabled(e.target.checked)}
               />
-              Simular costos de ejecución
+              Simular costos de ejecución (Fase 0)
             </label>
             <p className="text-xs text-muted-foreground">
-              Se aplica únicamente a estrategias M1. E1/E2 M15 conservan la ejecución calibrada de su versión optimizada. Coste por lado = <span className="font-mono">spread/2 + slippage + comisión</span>.
-              Se descuenta en cada fill (entrada + parciales + cierre).
+              Se aplica a <strong>todos</strong> los motores (antes los M15 corrían con spread 0 e inflaban su edge).
+              Coste por lado = <span className="font-mono">spread/2 × mult. sesión + slippage + comisión</span>, descontado en cada fill
+              (entrada + parciales + cierre). Las ejecuciones a mercado (SL, órdenes stop, time-stop) pagan además el slippage de stop.
+              La latencia sólo se aplica a motores M1; en TFs mayores la entrada es la apertura de la barra siguiente.
             </p>
           </div>
           <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 ${costsEnabled ? "" : "opacity-50 pointer-events-none"}`}>
@@ -899,6 +901,22 @@ function BacktestPage() {
                 onChange={(e) => setLatencyBars(Math.max(0, Math.min(10, Math.round(Number(e.target.value) || 0))))}
                 className="w-full px-2 py-1 rounded border border-border bg-background font-mono text-sm"
               />
+            </label>
+          </div>
+          <div className={`grid grid-cols-1 md:grid-cols-2 gap-3 ${costsEnabled ? "" : "opacity-50 pointer-events-none"}`}>
+            <label className="text-xs space-y-1">
+              <div className="text-muted-foreground">Slippage extra en stops (USD)</div>
+              <input
+                type="number" step="0.01" min="0" value={stopSlippageUsd}
+                onChange={(e) => setStopSlippageUsd(Math.max(0, Number(e.target.value) || 0))}
+                className="w-full px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+              />
+            </label>
+            <label className="flex items-center gap-2 text-xs md:mt-5 cursor-pointer">
+              <input type="checkbox" checked={sessionSpread} onChange={(e) => setSessionSpread(e.target.checked)} />
+              <span className="text-muted-foreground">
+                Spread variable por sesión (Londres/NY ×1 · tarde NY ×1.25 · rollover 20-23 UTC ×2.5 · Asia ×1.7)
+              </span>
             </label>
           </div>
           {costsEnabled && (
