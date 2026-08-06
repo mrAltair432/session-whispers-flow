@@ -125,9 +125,16 @@ function BacktestPage() {
   const [slippageUsd, setSlippageUsd] = useState(0.05);
   const [commissionUsd, setCommissionUsd] = useState(0);
   const [latencyBars, setLatencyBars] = useState(1);
+  // Fase 0: slippage extra en ejecuciones a mercado (SL, stops, time-stop) y
+  // spread variable por sesión (Asia/rollover más caro que Londres).
+  const [stopSlippageUsd, setStopSlippageUsd] = useState(0.08);
+  const [sessionSpread, setSessionSpread] = useState(true);
   const costsPayload = costsEnabled
-    ? { spreadUsd, slippageUsd, commissionUsd, latencyBars }
-    : { spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0 };
+    ? { spreadUsd, slippageUsd, commissionUsd, latencyBars, stopSlippageUsd, sessionSpread }
+    : {
+        spreadUsd: 0, slippageUsd: 0, commissionUsd: 0, latencyBars: 0,
+        stopSlippageUsd: 0, sessionSpread: false,
+      };
   const [datasets, setDatasets] = useState<Record<TfKey, CustomData | undefined>>(
     {} as Record<TfKey, CustomData | undefined>,
   );
