@@ -379,7 +379,7 @@ export function simulateGridBasket(
   startIdx: number,
   plan: GridPlan,
   maxHoldBars: number,
-  costPerSideUsd: number,
+  costPerSideUsd: number | CostModel,
   management?: { breakEvenAtR?: number; trailAfterR?: number; trailStepAtrMult?: number },
   atrArr?: number[],
 ): {
@@ -391,7 +391,9 @@ export function simulateGridBasket(
     const c = bars[startIdx];
     return { exit: c.close, rMultiple: 0, outcome: "timeout", closeTime: c.time, maeR: 0, mfeR: 0, fills: 0, maxOpen: 0 };
   }
-  const costR = costPerSideUsd / risk;
+  const cm = toCostModel(costPerSideUsd);
+  const costRAt = (t: number) => cm.perSideAt(t) / risk;
+  const stopExtraR = cm.stopExtraUsd / risk;
   const maxOpenAllowed = plan.maxOpenPositions ?? plan.orders.length + 1;
   const expireIdx = startIdx + (plan.expireBars ?? maxHoldBars);
 
@@ -405,7 +407,7 @@ export function simulateGridBasket(
   let lastPrice = bars[startIdx].close;
   let closeTime = bars[startIdx].time;
 
-  const openPosition = (side: "long" | "short", price: number) => {
+  const openPosition = (side: "long" | "short", price: number, time: number, marketFill = false) => {
     if (open.length >= maxOpenAllowed) return;
     open.push({
       side,
@@ -416,19 +418,19 @@ export function simulateGridBasket(
       best: price,
     });
     fills += 1;
-    realizedR -= costR; // coste de apertura
+    realizedR -= costRAt(time) + (marketFill ? stopExtraR : 0); // coste de apertura
     if (open.length > maxOpen) maxOpen = open.length;
   };
 
   if (plan.includeMarketEntry) {
     const first = bars[Math.min(startIdx + 1, bars.length - 1)];
-    openPosition(plan.orders[0]?.side ?? "long", first.open);
+    openPosition(plan.orders[0]?.side ?? "long", first.open, first.time, true);
   }
 
-  const closePosition = (idx: number, price: number) => {
+  const closePosition = (idx: number, price: number, time: number, marketExit = false) => {
     const p = open[idx];
     const moveR = p.side === "long" ? (price - p.entry) / risk : (p.entry - price) / risk;
-    realizedR += moveR - costR;
+    realizedR += moveR - costRAt(time) - (marketExit ? stopExtraR : 0);
     open.splice(idx, 1);
   };
 
@@ -448,7 +450,8 @@ export function simulateGridBasket(
             : o.kind === "limit" ? c.high >= o.price : c.low <= o.price;
         if (hit) {
           o.filled = true;
-          openPosition(o.side, o.price);
+          // Las STOP se llenan a mercado: pagan slippage extra. Las LIMIT no.
+          openPosition(o.side, o.price, c.time, o.kind === "stop");
         }
       }
     }
@@ -469,9 +472,9 @@ export function simulateGridBasket(
     for (let k = open.length - 1; k >= 0; k--) {
       const p = open[k];
       const slHit = p.side === "long" ? c.low <= p.sl : c.high >= p.sl;
-      if (slHit) { closePosition(k, p.sl); continue; }
+      if (slHit) { closePosition(k, p.sl, c.time, true); continue; }
       const tpHit = p.side === "long" ? c.high >= p.tp : c.low <= p.tp;
-      if (tpHit) { closePosition(k, p.tp); }
+      if (tpHit) { closePosition(k, p.tp, c.time); }
     }
 
     // 4) Gestión por posición (BE + trailing escalonado) al cierre de la vela
@@ -506,7 +509,7 @@ export function simulateGridBasket(
   }
 
   // Cierre forzado del remanente a mercado
-  for (let k = open.length - 1; k >= 0; k--) closePosition(k, lastPrice);
+  for (let k = open.length - 1; k >= 0; k--) closePosition(k, lastPrice, closeTime, true);
 
   const outcome: BacktestTrade["outcome"] =
     realizedR > 0.05 ? "tp1" : realizedR < -0.05 ? "sl" : "be";
