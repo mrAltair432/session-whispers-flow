@@ -1,5 +1,8 @@
 /// <reference lib="webworker" />
-import { runBacktest, runBacktestBars, type BacktestResult, type BacktestCosts } from "./backtest";
+import {
+  runBacktest, runBacktestBars, computeMetrics,
+  type BacktestResult, type BacktestCosts, type BacktestTrade, type BacktestMetrics,
+} from "./backtest";
 import type { Candle } from "./analysis";
 import { STRATEGIES, type EngineKey } from "./strategies";
 
@@ -18,10 +21,13 @@ function toBars(p: BarsPayload) {
 }
 
 function costsForEngine(engineKey: EngineKey, costs?: BacktestCosts): BacktestCosts | undefined {
-  // Los controles del dashboard están calibrados para scalping M1. Aplicar
-  // esa misma latencia en E1/E2 equivale a retrasar la entrada 15 minutos y
-  // rompe la paridad con las versiones optimizadas en M15.
-  return STRATEGIES[engineKey].triggerTf === "M1" ? costs : undefined;
+  // FASE 0 — el spread/slippage/comisión se aplica a TODOS los motores.
+  // Lo único que se escala es la latencia: los controles están en barras del
+  // TF trigger, y 1 barra M15 serían 15 minutos de retraso (irreal). Para
+  // TFs > M1 la ejecución ocurre en la apertura de la barra siguiente.
+  if (!costs) return undefined;
+  if (STRATEGIES[engineKey].triggerTf === "M1") return costs;
+  return { ...costs, latencyBars: 0 };
 }
 
 type BacktestJob = BarsPayload & {
@@ -64,7 +70,34 @@ type OneComboJob = BarsPayload & {
   costs?: BacktestCosts;
 };
 
-type Job = BacktestJob | OptimizeJob | BaselineJob | OneComboJob;
+// FASE 1 — walk-forward rodante: optimiza en una ventana y evalúa a ciegas
+// en la ventana siguiente, avanzando en el tiempo.
+type WalkForwardJob = BarsPayload & {
+  id: number;
+  type: "walkforward";
+  engineKey: EngineKey;
+  trainDays: number;
+  testDays: number;
+  excludeWeekdays: number[];
+  autoTimeFilters: boolean;
+  costs?: BacktestCosts;
+};
+
+type Job = BacktestJob | OptimizeJob | BaselineJob | OneComboJob | WalkForwardJob;
+
+const DAY = 86400;
+
+function summarize(m: BacktestMetrics) {
+  return {
+    trades: m.trades,
+    winrate: m.winrate,
+    totalR: m.totalR,
+    expectancy: m.expectancy,
+    profitFactor: isFinite(m.profitFactor) ? m.profitFactor : 99,
+    maxDrawdownR: m.maxDrawdownR,
+    sharpe: m.sharpe,
+  };
+}
 
 self.onmessage = (e: MessageEvent<Job>) => {
   const job = e.data;
