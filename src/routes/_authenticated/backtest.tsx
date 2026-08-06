@@ -176,6 +176,13 @@ function BacktestPage() {
   const [wfPending, setWfPending] = useState(false);
   const [wfError, setWfError] = useState<string | null>(null);
   const [wfResult, setWfResult] = useState<WfResult | null>(null);
+  // Fase 1 — walk-forward rodante sobre todos los motores seleccionados.
+  const [trainDays, setTrainDays] = useState(180);
+  const [testDays, setTestDays] = useState(60);
+  const [wfRollPending, setWfRollPending] = useState(false);
+  const [wfRollCurrent, setWfRollCurrent] = useState<string | null>(null);
+  const [wfRollRows, setWfRollRows] = useState<WfRollRow[]>([]);
+  const [wfRollError, setWfRollError] = useState<string | null>(null);
 
   // Al cambiar de estrategia a optimizar, precargar su config guardada (si existe)
   // en los controles superiores para que el próximo backtest la use.
