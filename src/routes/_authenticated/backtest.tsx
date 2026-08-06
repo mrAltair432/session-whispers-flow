@@ -928,6 +928,142 @@ function BacktestPage() {
           )}
         </section>
 
+        {/* FASE 1 · Walk-forward rodante */}
+        <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Split className="w-4 h-4 text-primary" />
+              <h3 className="font-semibold">Walk-forward rodante (Fase 1)</h3>
+            </div>
+            <div className="flex items-end gap-3">
+              <label className="text-xs space-y-1">
+                <div className="text-muted-foreground">Train (días)</div>
+                <input
+                  type="number" min={30} step={15} value={trainDays}
+                  onChange={(e) => setTrainDays(Math.max(30, Number(e.target.value) || 30))}
+                  className="w-24 px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+                />
+              </label>
+              <label className="text-xs space-y-1">
+                <div className="text-muted-foreground">Test OOS (días)</div>
+                <input
+                  type="number" min={7} step={7} value={testDays}
+                  onChange={(e) => setTestDays(Math.max(7, Number(e.target.value) || 7))}
+                  className="w-24 px-2 py-1 rounded border border-border bg-background font-mono text-sm"
+                />
+              </label>
+              <Button size="sm" onClick={runRollingWalkForward} disabled={wfRollPending || m.isPending || o.isPending}>
+                {wfRollPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
+                {wfRollPending ? "Corriendo..." : "Correr walk-forward"}
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Optimiza <span className="font-mono">minScore</span> en cada ventana de train y evalúa a ciegas en la ventana
+            siguiente, avanzando en el tiempo. <strong>Sólo cuenta el resultado OOS</strong>: es el único número que no
+            está contaminado por la propia optimización. Criterio de supervivencia: <span className="font-mono">PF ≥ 1.25</span> y
+            <span className="font-mono"> ≥ 100 trades</span> fuera de muestra.
+          </p>
+          {wfRollCurrent && (
+            <p className="text-xs text-primary">Evaluando {wfRollCurrent}…</p>
+          )}
+          {wfRollError && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">{wfRollError}</div>
+          )}
+          {wfRollRows.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-muted-foreground border-b border-border">
+                  <tr>
+                    <th className="text-left py-2">Motor</th>
+                    <th className="text-right">Folds</th>
+                    <th className="text-right">Trades OOS</th>
+                    <th className="text-right">WR OOS</th>
+                    <th className="text-right">Total R OOS</th>
+                    <th className="text-right">PF OOS</th>
+                    <th className="text-right">Max DD OOS</th>
+                    <th className="text-right">PF in-sample</th>
+                    <th className="text-right">Degradación</th>
+                    <th className="text-right">Veredicto</th>
+                  </tr>
+                </thead>
+                <tbody className="font-mono">
+                  {wfRollRows.map((r) => {
+                    const v = wfVerdict(r);
+                    const degr = r.inSample.profitFactor > 0
+                      ? (1 - r.oos.profitFactor / r.inSample.profitFactor) * 100
+                      : 0;
+                    return (
+                      <tr key={r.engineKey} className="border-b border-border/50">
+                        <td className="py-2 font-sans">{STRATEGIES[r.engineKey].shortName}</td>
+                        {r.error ? (
+                          <td colSpan={8} className="text-right text-xs text-muted-foreground font-sans">{r.error}</td>
+                        ) : (
+                          <>
+                            <td className="text-right">{r.folds.length}</td>
+                            <td className="text-right">{r.oos.trades}</td>
+                            <td className="text-right">{(r.oos.winrate * 100).toFixed(1)}%</td>
+                            <td className={`text-right ${r.oos.totalR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              {r.oos.totalR >= 0 ? "+" : ""}{r.oos.totalR.toFixed(1)}R
+                            </td>
+                            <td className={`text-right ${r.oos.profitFactor >= 1.25 ? "text-emerald-400" : "text-red-400"}`}>
+                              {r.oos.profitFactor.toFixed(2)}
+                            </td>
+                            <td className="text-right">{r.oos.maxDrawdownR.toFixed(1)}R</td>
+                            <td className="text-right text-muted-foreground">{r.inSample.profitFactor.toFixed(2)}</td>
+                            <td className="text-right text-muted-foreground">{degr > 0 ? `−${degr.toFixed(0)}%` : "—"}</td>
+                          </>
+                        )}
+                        <td className="text-right">
+                          <span className={`px-2 py-0.5 rounded text-xs font-sans ${v.cls}`}>{v.label}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {wfRollRows.some((r) => r.folds.length > 0) && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground">Ver detalle por ventana</summary>
+              <div className="mt-2 space-y-3">
+                {wfRollRows.filter((r) => r.folds.length).map((r) => (
+                  <div key={r.engineKey}>
+                    <div className="font-medium mb-1">{STRATEGIES[r.engineKey].shortName}</div>
+                    <table className="w-full font-mono">
+                      <thead className="text-muted-foreground">
+                        <tr>
+                          <th className="text-left">Ventana OOS</th>
+                          <th className="text-right">minScore</th>
+                          <th className="text-right">Trades</th>
+                          <th className="text-right">R</th>
+                          <th className="text-right">PF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {r.folds.map((f, i) => (
+                          <tr key={i} className="border-b border-border/30">
+                            <td className="text-left">
+                              {new Date(f.trainEnd * 1000).toISOString().slice(0, 10)} → {new Date(f.testEnd * 1000).toISOString().slice(0, 10)}
+                            </td>
+                            <td className="text-right">{f.minScore}</td>
+                            <td className="text-right">{f.test.trades}</td>
+                            <td className={`text-right ${f.test.totalR >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                              {f.test.totalR >= 0 ? "+" : ""}{f.test.totalR.toFixed(1)}
+                            </td>
+                            <td className="text-right">{f.test.profitFactor.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </section>
+
         {/* Optimizer results */}
         {o.data && !o.data.error && (
           <section className="rounded-lg border border-primary/30 bg-card p-4 space-y-3">
