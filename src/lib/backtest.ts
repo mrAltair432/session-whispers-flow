@@ -207,7 +207,7 @@ export function simulateTrade(
   tp2: number,
   tp3: number,
   maxHoldBars: number,
-  costPerSideUsd: number,
+  costPerSideUsd: number | CostModel,
   management?: { breakEvenAtR?: number; timeStopBars?: number; trailAfterR?: number; trailStepAtrMult?: number },
   atrArr?: number[],
 ): { exit: number; rMultiple: number; outcome: BacktestTrade["outcome"]; closeTime: number; maeR: number; mfeR: number } {
@@ -218,9 +218,11 @@ export function simulateTrade(
   // Position allocation: 50% to TP1, 30% to TP2, 20% runner
   let realizedR = 0;
   let remaining = 1;
-  const costR = initRisk > 0 ? costPerSideUsd / initRisk : 0;
+  const cm = toCostModel(costPerSideUsd);
+  const costRAt = (t: number) => (initRisk > 0 ? cm.perSideAt(t) / initRisk : 0);
+  const stopExtraR = initRisk > 0 ? cm.stopExtraUsd / initRisk : 0;
   // Coste de la entrada (una sola vez sobre la posición completa)
-  realizedR -= costR;
+  realizedR -= costRAt(m15[entryIdx]?.time ?? 0);
   const beAtR = management?.breakEvenAtR;
   const timeStopBars = management?.timeStopBars;
   const trailAfterR = management?.trailAfterR;
@@ -243,11 +245,16 @@ export function simulateTrade(
     if (dn < maeR) maeR = dn;
   };
 
-  const closeRemaining = (price: number, time: number, outcome: BacktestTrade["outcome"]) => {
+  const closeRemaining = (
+    price: number,
+    time: number,
+    outcome: BacktestTrade["outcome"],
+    marketExit = false,
+  ) => {
     const moveR = bias === "long" ? (price - entry) / initRisk : (entry - price) / initRisk;
     realizedR += remaining * moveR;
     // Coste de cierre proporcional al tamaño que queda
-    realizedR -= remaining * costR;
+    realizedR -= remaining * (costRAt(time) + (marketExit ? stopExtraR : 0));
     remaining = 0;
     return { exit: price, rMultiple: realizedR, outcome, closeTime: time, maeR, mfeR };
   };
@@ -258,57 +265,57 @@ export function simulateTrade(
     track(c);
     // Time-stop (H): si no ha llegado a TP1 tras N barras, cierre a mercado.
     if (!tp1Hit && timeStopBars && (i - entryIdx) >= timeStopBars) {
-      return closeRemaining(c.open, c.time, "timeout");
+      return closeRemaining(c.open, c.time, "timeout", true);
     }
     if (bias === "long") {
       // Check SL first (conservative)
       if (c.low <= sl) {
-        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
+        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl", true);
         // partials already realized: TP1 secured, possibly TP2
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
-        return closeRemaining(sl, c.time, outcome);
+        return closeRemaining(sl, c.time, outcome, true);
       }
       if (!tp1Hit && c.high >= tp1) {
         realizedR += 0.5 * 1;
-        realizedR -= 0.5 * costR; // coste del parcial 50%
+        realizedR -= 0.5 * costRAt(c.time); // coste del parcial 50%
         remaining -= 0.5;
         sl = entry; // move to BE
         tp1Hit = true;
       }
       if (tp1Hit && !tp2Hit && c.high >= tp2) {
         realizedR += 0.3 * 2;
-        realizedR -= 0.3 * costR; // coste del parcial 30%
+        realizedR -= 0.3 * costRAt(c.time); // coste del parcial 30%
         remaining -= 0.3;
         tp2Hit = true;
       }
       if (tp2Hit && c.high >= tp3) {
         realizedR += 0.2 * 3;
-        realizedR -= 0.2 * costR; // coste del cierre runner
+        realizedR -= 0.2 * costRAt(c.time); // coste del cierre runner
         remaining = 0;
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
       }
     } else {
       if (c.high >= sl) {
-        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl");
+        if (!tp1Hit) return closeRemaining(sl, c.time, beMoved ? "be" : "sl", true);
         const outcome: BacktestTrade["outcome"] = tp2Hit ? "tp2" : "tp1";
-        return closeRemaining(sl, c.time, outcome);
+        return closeRemaining(sl, c.time, outcome, true);
       }
       if (!tp1Hit && c.low <= tp1) {
         realizedR += 0.5 * 1;
-        realizedR -= 0.5 * costR;
+        realizedR -= 0.5 * costRAt(c.time);
         remaining -= 0.5;
         sl = entry;
         tp1Hit = true;
       }
       if (tp1Hit && !tp2Hit && c.low <= tp2) {
         realizedR += 0.3 * 2;
-        realizedR -= 0.3 * costR;
+        realizedR -= 0.3 * costRAt(c.time);
         remaining -= 0.3;
         tp2Hit = true;
       }
       if (tp2Hit && c.low <= tp3) {
         realizedR += 0.2 * 3;
-        realizedR -= 0.2 * costR;
+        realizedR -= 0.2 * costRAt(c.time);
         remaining = 0;
         return { exit: tp3, rMultiple: realizedR, outcome: "tp3", closeTime: c.time, maeR, mfeR };
       }
@@ -346,7 +353,7 @@ export function simulateTrade(
   }
   // Timeout: close at last close
   const last = m15[end];
-  return closeRemaining(last.close, last.time, "timeout");
+  return closeRemaining(last.close, last.time, "timeout", true);
 }
 
 // ---------------------------------------------------------------------------
