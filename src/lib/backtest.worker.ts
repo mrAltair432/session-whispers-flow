@@ -234,7 +234,7 @@ self.onmessage = (e: MessageEvent<Job>) => {
     } else if (job.type === "walkforward") {
       const bars = toBars(job);
       const strat = STRATEGIES[job.engineKey];
-      const triggerBars = bars[strat.triggerTf] ?? [];
+      const triggerBars = (bars as Partial<Record<string, typeof bars.M1>>)[strat.triggerTf] ?? [];
       if (triggerBars.length < 200) throw new Error("Historial insuficiente para walk-forward.");
       const t0 = triggerBars[0].time;
       const tEnd = triggerBars[triggerBars.length - 1].time;
