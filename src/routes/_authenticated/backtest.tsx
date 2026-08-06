@@ -1089,7 +1089,7 @@ function BacktestPage() {
 
             {data.results.map((r) => <ProfileDetail key={r.engineKey} result={r} />)}
 
-            <ChallengePanel results={data.results.filter((r) => STRATEGIES[r.engineKey].ftmoEligible !== false)} />
+            <ChallengePanel results={data.results} />
 
             {data.results
               .filter((r) => r.trades.length >= 40 && r.trades[0].features?.length)
