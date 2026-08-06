@@ -62,6 +62,27 @@ type WfResult = {
 };
 
 type SavedConfig = { minScore: number; excludeHours: number[]; savedAt: number };
+
+// Fase 1 — walk-forward rodante (varias ventanas train→test encadenadas).
+type WfRollFold = {
+  trainStart: number; trainEnd: number; testEnd: number; minScore: number;
+  train: WfWindowMetrics; test: WfWindowMetrics;
+};
+type WfRollRow = {
+  engineKey: EngineKey;
+  folds: WfRollFold[];
+  oos: WfWindowMetrics;
+  inSample: WfWindowMetrics;
+  error?: string;
+};
+function wfVerdict(r: WfRollRow): { label: string; cls: string } {
+  if (r.error) return { label: "ERROR", cls: "bg-muted text-muted-foreground" };
+  if (r.oos.trades >= 100 && r.oos.profitFactor >= 1.25)
+    return { label: "PASA", cls: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40" };
+  if (r.oos.trades >= 30 && r.oos.profitFactor >= 1.05)
+    return { label: "DUDOSO", cls: "bg-amber-500/20 text-amber-300 border border-amber-500/40" };
+  return { label: "DESCARTAR", cls: "bg-red-500/20 text-red-300 border border-red-500/40" };
+}
 const CONFIG_KEY = "tc.backtest.appliedConfig.v1";
 function loadSavedConfigs(): Partial<Record<EngineKey, SavedConfig>> {
   if (typeof window === "undefined") return {};
