@@ -1106,7 +1106,7 @@ function ProfileDetail({ result }: { result: BacktestResult }) {
 }
 
 // --- #5 Simulador de reto (FTMO) --------------------------------------
-function ChallengePanel({ results }: { results: BacktestResult[] }) {
+function ChallengePanel({ results: allResults }: { results: BacktestResult[] }) {
   const [balance, setBalance] = useState(DEFAULT_FTMO_RULES.balance);
   const [riskPct, setRiskPct] = useState(DEFAULT_FTMO_RULES.riskPerTradePct);
   const [target, setTarget] = useState(DEFAULT_FTMO_RULES.profitTargetPct);
@@ -1115,6 +1115,12 @@ function ChallengePanel({ results }: { results: BacktestResult[] }) {
   const [minDays, setMinDays] = useState(DEFAULT_FTMO_RULES.minTradingDays);
   const [dailyStop, setDailyStop] = useState(true);
   const [windowDays, setWindowDays] = useState(28);
+  // Motores de alto riesgo (E7/E8): fuera del reto salvo activación manual.
+  const [includeHighRisk, setIncludeHighRisk] = useState(false);
+  const highRisk = allResults.filter((r) => STRATEGIES[r.engineKey].ftmoEligible === false);
+  const results = includeHighRisk
+    ? allResults
+    : allResults.filter((r) => STRATEGIES[r.engineKey].ftmoEligible !== false);
 
   const rules = {
     balance, riskPerTradePct: riskPct, profitTargetPct: target,
@@ -1202,6 +1208,17 @@ function ChallengePanel({ results }: { results: BacktestResult[] }) {
         <input type="checkbox" checked={dailyStop} onChange={(e) => setDailyStop(e.target.checked)} />
         Aplicar stop diario (deja de operar al 80% del límite diario) — así opera el Modo FTMO en vivo
       </label>
+
+      {highRisk.length > 0 && (
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={includeHighRisk}
+            onChange={(e) => setIncludeHighRisk(e.target.checked)}
+          />
+          Incluir motores de alto riesgo ({highRisk.map((r) => STRATEGIES[r.engineKey].shortName).join(", ")}) — desactivados por defecto en modo FTMO
+        </label>
+      )}
 
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full text-sm">
